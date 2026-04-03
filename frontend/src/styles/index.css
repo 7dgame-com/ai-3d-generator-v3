@@ -1,0 +1,158 @@
+/* 设计系统 CSS 变量 - 参照 web/docs/plugin-design-guide.md */
+:root {
+  /* 主色调 - modern-blue 主题 */
+  --primary-color: #00BAFF;
+  --primary-hover: #009dd9;
+  --primary-light: rgba(0, 186, 255, 0.1);
+  --primary-dark: #0088cc;
+
+  /* 文字 */
+  --text-primary: #1a1a2e;
+  --text-secondary: #4a4a6a;
+  --text-muted: #8e8ea0;
+  --text-inverse: #ffffff;
+
+  /* 背景 */
+  --bg-page: #f5f7fa;
+  --bg-card: #ffffff;
+  --bg-hover: #f0f2f5;
+  --bg-active: #e6f7ff;
+  --bg-secondary: #fafafa;
+  --bg-tertiary: #f0f0f0;
+
+  /* 边框 */
+  --border-color: #e4e7ed;
+  --border-color-hover: #c0c4cc;
+  --border-color-active: var(--primary-color);
+
+  /* 语义色 */
+  --success-color: #67c23a;
+  --success-light: rgba(103, 194, 58, 0.1);
+  --warning-color: #e6a23c;
+  --warning-light: rgba(230, 162, 60, 0.1);
+  --danger-color: #f56c6c;
+  --danger-light: rgba(245, 108, 108, 0.1);
+  --info-color: #909399;
+  --info-light: rgba(144, 147, 153, 0.1);
+
+  /* 排版 */
+  --font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  --font-size-xs: 12px;
+  --font-size-sm: 13px;
+  --font-size-md: 14px;
+  --font-size-lg: 16px;
+  --font-size-xl: 18px;
+  --font-weight: 400;
+  --font-weight-medium: 500;
+  --font-weight-bold: 600;
+
+  /* 间距 */
+  --spacing-xs: 4px;
+  --spacing-sm: 8px;
+  --spacing-md: 16px;
+  --spacing-lg: 24px;
+  --spacing-xl: 32px;
+
+  /* 圆角 */
+  --radius-sm: 12px;
+  --radius-md: 20px;
+  --radius-lg: 24px;
+  --radius-full: 9999px;
+
+  /* 阴影 */
+  --shadow-sm: 0 1px 3px rgba(0, 0, 0, 0.05);
+  --shadow-md: 0 4px 12px rgba(0, 0, 0, 0.08);
+  --shadow-lg: 0 8px 24px rgba(0, 0, 0, 0.12);
+
+  /* 动画 */
+  --transition-fast: 0.15s ease;
+  --transition-normal: 0.2s ease;
+  --transition-slow: 0.3s ease;
+
+  /* Element Plus 覆盖 */
+  --el-color-primary: var(--primary-color);
+  --el-color-success: var(--success-color);
+  --el-color-warning: var(--warning-color);
+  --el-color-danger: var(--danger-color);
+  --el-color-info: var(--info-color);
+  --el-bg-color: var(--bg-page);
+  --el-bg-color-page: var(--bg-page);
+  --el-text-color-primary: var(--text-primary);
+  --el-text-color-regular: var(--text-secondary);
+  --el-border-color: var(--border-color);
+}
+
+/* 夜间模式 */
+[data-theme="dark"] {
+  --primary-color: #409EFF;
+  --primary-hover: #66b1ff;
+  --primary-light: rgba(64, 158, 255, 0.15);
+  --primary-dark: #3a8ee6;
+
+  --text-primary: #e5eaf3;
+  --text-secondary: #a3a6ad;
+  --text-muted: #6c6e72;
+  --text-inverse: #141414;
+
+  --bg-page: #141414;
+  --bg-card: #1d1e1f;
+  --bg-hover: #262727;
+  --bg-active: #1a2744;
+  --bg-secondary: #1d1e1f;
+  --bg-tertiary: #262727;
+
+  --border-color: #363637;
+  --border-color-hover: #4c4d4f;
+  --border-color-active: var(--primary-color);
+
+  --success-color: #67c23a;
+  --success-light: rgba(103, 194, 58, 0.15);
+  --warning-color: #e6a23c;
+  --warning-light: rgba(230, 162, 60, 0.15);
+  --danger-color: #f56c6c;
+  --danger-light: rgba(245, 108, 108, 0.15);
+  --info-color: #909399;
+  --info-light: rgba(144, 147, 153, 0.15);
+
+  --shadow-sm: 0 1px 3px rgba(0, 0, 0, 0.3);
+  --shadow-md: 0 4px 12px rgba(0, 0, 0, 0.4);
+  --shadow-lg: 0 8px 24px rgba(0, 0, 0, 0.5);
+
+  --el-color-primary: var(--primary-color);
+  --el-bg-color: var(--bg-card);
+  --el-bg-color-page: var(--bg-page);
+  --el-bg-color-overlay: var(--bg-card);
+  --el-text-color-primary: var(--text-primary);
+  --el-text-color-regular: var(--text-secondary);
+  --el-text-color-secondary: var(--text-muted);
+  --el-border-color: var(--border-color);
+  --el-border-color-light: var(--border-color);
+  --el-border-color-lighter: var(--border-color);
+  --el-fill-color-blank: var(--bg-card);
+  --el-fill-color-light: var(--bg-hover);
+  --el-mask-color: rgba(0, 0, 0, 0.6);
+}
+
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+body {
+  font-family: var(--font-family);
+  font-size: var(--font-size-md);
+  color: var(--text-primary);
+  background: var(--bg-page);
+}
+
+.global-version {
+  position: fixed;
+  right: 12px;
+  bottom: 8px;
+  font-size: 11px;
+  color: #ccc;
+  pointer-events: none;
+  z-index: 9999;
+  user-select: none;
+}

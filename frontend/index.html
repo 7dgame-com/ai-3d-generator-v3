@@ -1,0 +1,38 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>纯前端插件模板</title>
+</head>
+<body>
+  <div id="app"></div>
+  <script>
+    // 在 Vue 挂载前尽早注册 message 监听器，避免错过主框架的 INIT 消息
+    (function() {
+      window.__EARLY_INIT_PAYLOAD__ = null;
+      // 只在 iframe 内才监听并存储 token，防止直接访问时复用旧 token
+      var inIframe = false;
+      try { inIframe = window.self !== window.top; } catch(e) { inIframe = true; }
+      if (!inIframe) return;
+      window.addEventListener('message', function earlyHandler(event) {
+        if (event.source !== window.parent) return;
+        var data = event.data || {};
+        if (data.type === 'INIT' && data.payload && data.payload.token) {
+          window.__EARLY_INIT_PAYLOAD__ = data.payload;
+          localStorage.setItem('ai-3d-gen-v3-token', data.payload.token);
+          window.parent.postMessage({ type: 'PLUGIN_READY', id: 'ready-early-' + Date.now() }, '*');
+        }
+      });
+      // 从 URL 参数初始化主题
+      var params = new URLSearchParams(window.location.search);
+      var theme = params.get('theme');
+      var darkThemes = ['deep-space', 'cyber-tech'];
+      if (theme && darkThemes.indexOf(theme) !== -1) {
+        document.documentElement.setAttribute('data-theme', 'dark');
+      }
+    })();
+  </script>
+  <script type="module" src="/src/main.ts"></script>
+</body>
+</html>
