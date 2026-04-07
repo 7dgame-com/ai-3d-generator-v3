@@ -1,0 +1,13 @@
+.DS_Store
+tmp/
+
+frontend/node_modules/
+frontend/dist/
+frontend/.env
+frontend/*.log
+frontend/tsconfig.tsbuildinfo
+
+backend/node_modules/
+backend/dist/
+backend/.env
+

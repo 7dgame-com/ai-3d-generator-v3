@@ -1,0 +1,16 @@
+{
+  "id": "ai-3d-generator-v3",
+  "schemaVersion": "1",
+  "nameI18n": {
+    "zh-CN": "AI 3D 生成器 V3"
+  },
+  "descriptionI18n": {
+    "zh-CN": "基于 Tripo3D、Hyper3D 和 COS 的独立 3D 生成插件"
+  },
+  "group": {
+    "id": "tools",
+    "nameI18n": {
+      "zh-CN": "实用工具"
+    }
+  }
+}
