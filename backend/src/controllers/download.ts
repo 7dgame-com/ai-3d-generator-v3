@@ -3,16 +3,16 @@
  *
  * GET /api/download/:taskId
  *   - 从 tasks 表获取 output_url
- *   - 代理请求 Tripo3D 文件流，以 {task_id}.{format} 命名返回给客户端
- *   - 支持 ?format=glb|fbx|obj 查询参数，默认 glb
- *
- * 需求：6.1、6.2、6.3
+ *   - 代理请求文件流，以 {task_id}.{format} 命名返回给客户端
+ *   - 当前仅支持 glb；其他格式会明确返回 422
+ *   - 完成超过 24 小时的任务视为过期，返回 410 Gone
  */
 
 import { Response } from 'express';
 import axios from 'axios';
 import { query } from '../db/connection';
 import { AuthenticatedRequest } from '../middleware/auth';
+import { isDownloadExpired } from '../utils/urlExpiry';
 
 type DownloadFormat = 'glb' | 'fbx' | 'obj';
 const ALLOWED_FORMATS: DownloadFormat[] = ['glb', 'fbx', 'obj'];
@@ -20,26 +20,26 @@ const ALLOWED_FORMATS: DownloadFormat[] = ['glb', 'fbx', 'obj'];
 interface TaskRow {
   task_id: string;
   status: string;
+  provider_id: string;
   output_url: string | null;
+  completed_at: string | null;
 }
 
 /**
  * GET /api/download/:taskId
- * 代理下载 Tripo3D 输出文件
+ * 代理下载输出文件
  */
 export async function downloadFile(req: AuthenticatedRequest, res: Response): Promise<void> {
   const { taskId } = req.params;
   const userId = req.user.userId;
 
-  // 解析 format 参数，默认 glb
   const rawFormat = (req.query.format as string) || 'glb';
   const format: DownloadFormat = ALLOWED_FORMATS.includes(rawFormat as DownloadFormat)
     ? (rawFormat as DownloadFormat)
     : 'glb';
 
-  // 查询任务（限定当前用户）
   const rows = await query<TaskRow[]>(
-    'SELECT task_id, status, output_url FROM tasks WHERE task_id = ? AND user_id = ?',
+    'SELECT task_id, status, provider_id, output_url, completed_at FROM tasks WHERE task_id = ? AND user_id = ?',
     [taskId, userId]
   );
 
@@ -60,7 +60,20 @@ export async function downloadFile(req: AuthenticatedRequest, res: Response): Pr
     return;
   }
 
-  // 代理文件流
+  // 检查是否过期（从 URL 签名解析精确过期时间）
+  if (isDownloadExpired(task.output_url, task.completed_at)) {
+    res.status(410).json({ code: 'DOWNLOAD_EXPIRED', message: '下载链接已过期' });
+    return;
+  }
+
+  if (format !== 'glb') {
+    res.status(422).json({
+      code: 'UNSUPPORTED_DOWNLOAD_FORMAT',
+      message: `当前任务仅支持 glb 下载，provider=${task.provider_id}`,
+    });
+    return;
+  }
+
   try {
     const upstream = await axios.get(task.output_url, {
       responseType: 'stream',
@@ -70,7 +83,6 @@ export async function downloadFile(req: AuthenticatedRequest, res: Response): Pr
     res.setHeader('Content-Disposition', `attachment; filename="${task.task_id}.${format}"`);
     res.setHeader('Content-Type', 'application/octet-stream');
 
-    // 透传 Content-Length（如果上游提供）
     const contentLength = upstream.headers['content-length'];
     if (contentLength) {
       res.setHeader('Content-Length', contentLength);

@@ -20,6 +20,7 @@ import taskRoutes from './routes/task';
 import usageRoutes from './routes/usage';
 import downloadRoutes from './routes/download';
 import creditsRoutes from './routes/credits';
+import thumbnailRoutes from './routes/thumbnail';
 
 const app = express();
 const PORT: string | number = process.env.PORT || 8089;
@@ -44,11 +45,13 @@ app.get('/health', (_req: Request, res: Response) => {
 });
 
 // ========== 路由注册 ==========
-app.use('/backend', adminRoutes);
-app.use('/backend/tasks', taskRoutes);
-app.use('/backend/usage', usageRoutes);
-app.use('/backend/download', downloadRoutes);
-app.use('/backend', creditsRoutes);
+// nginx rewrite 会去掉 /backend/ 前缀，所以这里挂载到根路径
+app.use('/', adminRoutes);
+app.use('/tasks', taskRoutes);
+app.use('/usage', usageRoutes);
+app.use('/download', downloadRoutes);
+app.use('/thumbnail', thumbnailRoutes);
+app.use('/', creditsRoutes);
 
 // ========== 全局错误处理 ==========
 app.use((err: Error & { status?: number }, _req: Request, res: Response, _next: NextFunction) => {
@@ -61,15 +64,14 @@ app.use((err: Error & { status?: number }, _req: Request, res: Response, _next: 
 
 // ========== 启动服务器 ==========
 app.listen(PORT, async () => {
-  console.log(`[AI 3D Generator] API 服务已启动，端口: ${PORT}`);
-  try {
-    await testConnection();
-    await startPoller();
+    console.log(`[AI 3D Generator] API 服务已启动，端口: ${PORT}`);
+    try {
+      await testConnection();
 
-    // ========== 注册启用的 Provider 适配器 ==========
-    const enabledProviders = parseEnabledProviders();
-    const adapterMap: Record<string, typeof tripo3dAdapter | typeof hyper3dAdapter> = {
-      tripo3d: tripo3dAdapter,
+      // ========== 注册启用的 Provider 适配器 ==========
+      const enabledProviders = parseEnabledProviders();
+      const adapterMap: Record<string, typeof tripo3dAdapter | typeof hyper3dAdapter> = {
+        tripo3d: tripo3dAdapter,
       hyper3d: hyper3dAdapter,
     };
     for (const providerId of enabledProviders) {
@@ -77,13 +79,14 @@ app.listen(PORT, async () => {
       if (adapter) {
         providerRegistry.register(adapter);
         console.log(`[Server] 已注册 Provider 适配器: ${providerId}`);
+        }
       }
-    }
 
-    await startScheduler();
-  } catch (err) {
-    console.error('[Server] 关键服务启动失败，退出:', (err as Error).message);
-    process.exit(1);
+      await startPoller();
+      await startScheduler();
+    } catch (err) {
+      console.error('[Server] 关键服务启动失败，退出:', (err as Error).message);
+      process.exit(1);
   }
 });
 

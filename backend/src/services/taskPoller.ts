@@ -7,7 +7,31 @@ const POLL_INTERVAL_MS = 3000;
 const TIMEOUT_MS = 10 * 60 * 1000;
 const MAX_CONSECUTIVE_FAILURES = 3;
 
+/** Fallback credit cost per provider when the API doesn't return one */
+const PROVIDER_DEFAULT_COST: Record<string, number> = {
+  tripo3d: 30,
+  hyper3d: 0.5,
+};
+
 const activePollers = new Set<string>();
+
+/** Tracks the last written progress per task for smooth interpolation */
+const lastProgress = new Map<string, number>();
+
+/** Smoothly interpolate progress: advance toward target but don't jump */
+export function smoothProgress(taskId: string, targetProgress: number): number {
+  const current = lastProgress.get(taskId) ?? 0;
+  if (targetProgress <= current) {
+    // Target hasn't advanced (same job count), creep forward by 2% per poll
+    const crept = Math.min(current + 2, targetProgress + 14, 95);
+    lastProgress.set(taskId, crept);
+    return crept;
+  }
+  // Target jumped (new job completed), advance halfway to close the gap smoothly
+  const smoothed = Math.min(current + Math.ceil((targetProgress - current) / 2), 95);
+  lastProgress.set(taskId, smoothed);
+  return smoothed;
+}
 
 async function getApiKey(providerId: string): Promise<string> {
   const rows = await query<Array<{ value: string }>>(
@@ -35,6 +59,7 @@ async function getTaskContext(taskId: string): Promise<TaskContext | null> {
 }
 
 async function markTaskFailed(taskId: string, errorMessage: string): Promise<void> {
+  lastProgress.delete(taskId);
   await query(
     "UPDATE tasks SET status = 'failed', error_message = ?, completed_at = NOW() WHERE task_id = ?",
     [errorMessage, taskId]
@@ -53,6 +78,7 @@ async function markTaskFailed(taskId: string, errorMessage: string): Promise<voi
 }
 
 async function markTaskTimeout(taskId: string): Promise<void> {
+  lastProgress.delete(taskId);
   await query(
     "UPDATE tasks SET status = 'timeout', error_message = '生成超时', completed_at = NOW() WHERE task_id = ?",
     [taskId]
@@ -75,23 +101,48 @@ async function handleSuccess(
   userId: number,
   providerId: string,
   outputUrl: string,
-  creditCost: number
+  creditCost: number,
+  thumbnailUrl?: string
 ): Promise<void> {
-  await query(
-    `UPDATE tasks
-     SET status = 'success',
-         output_url = ?,
-         credit_cost = ?,
-         completed_at = NOW()
-     WHERE task_id = ?`,
-    [outputUrl, creditCost, taskId]
+  lastProgress.delete(taskId);
+  const result = await creditManager.finalizeTaskSuccess(
+    userId,
+    providerId,
+    taskId,
+    outputUrl,
+    creditCost,
+    thumbnailUrl
   );
-
-  try {
-    await creditManager.confirmDeduct(userId, providerId, taskId, creditCost);
-  } catch (error) {
-    console.error(`[TaskPoller] confirmDeduct failed for ${taskId}:`, (error as Error).message);
+  if (result.billingStatus === 'undercharged') {
+    console.warn(
+      `[TaskPoller] task ${taskId} completed with undercharged billing: ${result.billingMessage ?? 'unknown'}`
+    );
   }
+}
+
+function retryTaskSuccessFinalization(
+  taskId: string,
+  userId: number,
+  providerId: string,
+  outputUrl: string,
+  creditCost: number,
+  thumbnailUrl?: string
+): void {
+  setTimeout(async () => {
+    if (!activePollers.has(taskId)) {
+      return;
+    }
+    try {
+      await handleSuccess(taskId, userId, providerId, outputUrl, creditCost, thumbnailUrl);
+      activePollers.delete(taskId);
+    } catch (error) {
+      console.error(
+        `[TaskPoller] retry success finalization failed for ${taskId}:`,
+        (error as Error).message
+      );
+      retryTaskSuccessFinalization(taskId, userId, providerId, outputUrl, creditCost, thumbnailUrl);
+    }
+  }, POLL_INTERVAL_MS);
 }
 
 async function pollTask(taskId: string, startTime: number, failureCount: number): Promise<void> {
@@ -138,9 +189,30 @@ async function pollTask(taskId: string, startTime: number, failureCount: number)
         setTimeout(() => pollTask(taskId, startTime, 0), POLL_INTERVAL_MS);
         return;
       }
-      activePollers.delete(taskId);
-      await handleSuccess(taskId, userId, providerId, status.outputUrl, status.creditCost ?? 30);
-      return;
+      const actualCost = status.creditCost ?? PROVIDER_DEFAULT_COST[providerId] ?? 0;
+      try {
+        await handleSuccess(
+          taskId,
+          userId,
+          providerId,
+          status.outputUrl,
+          actualCost,
+          status.thumbnailUrl
+        );
+        activePollers.delete(taskId);
+        return;
+      } catch (error) {
+        console.error(`[TaskPoller] success finalization failed for ${taskId}:`, (error as Error).message);
+        retryTaskSuccessFinalization(
+          taskId,
+          userId,
+          providerId,
+          status.outputUrl,
+          actualCost,
+          status.thumbnailUrl
+        );
+        return;
+      }
     }
 
     if (status.status === 'failed') {
@@ -149,7 +221,7 @@ async function pollTask(taskId: string, startTime: number, failureCount: number)
       return;
     }
 
-    await query('UPDATE tasks SET progress = ? WHERE task_id = ?', [status.progress ?? 0, taskId]);
+    await query('UPDATE tasks SET progress = ? WHERE task_id = ?', [smoothProgress(taskId, status.progress ?? 0), taskId]);
     if (status.status === 'processing') {
       await query("UPDATE tasks SET status = 'processing' WHERE task_id = ? AND status = 'queued'", [taskId]);
     }

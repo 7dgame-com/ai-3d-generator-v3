@@ -1,3 +1,4 @@
+import type { PoolConnection } from 'mysql2/promise';
 import { pool } from '../db/connection';
 
 // ─── TypeScript 接口定义 ───────────────────────────────────────────────────────
@@ -28,6 +29,17 @@ export interface ProviderCreditStatus {
 
 // CreditStatus is now an array of ProviderCreditStatus
 export type CreditStatus = ProviderCreditStatus[];
+
+export interface ConfirmDeductResult {
+  billingStatus: 'settled' | 'undercharged';
+  billingMessage: string | null;
+  shortfallAmount: number;
+}
+
+interface TaskRowForBilling {
+  status: string;
+  error_message: string | null;
+}
 
 // ─── 工具函数 ──────────────────────────────────────────────────────────────────
 
@@ -62,6 +74,139 @@ export function sleep(ms: number): Promise<void> {
 // ─── CreditManager 类 ─────────────────────────────────────────────────────────
 
 export class CreditManager {
+  private async applyConfirmDeductInTransaction(
+    conn: Pick<PoolConnection, 'query'>,
+    userId: number,
+    providerId: string,
+    taskId: string,
+    actualAmount: number
+  ): Promise<ConfirmDeductResult> {
+    const [preRows] = await conn.query<any[]>(
+      `SELECT wallet_delta, pool_delta FROM credit_ledger
+       WHERE user_id = ? AND provider_id = ? AND task_id = ? AND event_type = 'pre_deduct'`,
+      [userId, providerId, taskId]
+    );
+
+    const preDeductedWallet = (preRows as any[]).reduce(
+      (sum: number, r: any) => sum + Math.abs(Number(r.wallet_delta || 0)),
+      0
+    );
+    const preDeductedPool = (preRows as any[]).reduce(
+      (sum: number, r: any) => sum + Math.abs(Number(r.pool_delta || 0)),
+      0
+    );
+    const preDeducted = preDeductedWallet + preDeductedPool;
+    const diff = actualAmount - preDeducted;
+
+    let shortfallAmount = 0;
+
+    if (diff < 0) {
+      const refundAmount = Math.abs(diff);
+
+      await conn.query(
+        'SELECT id FROM user_accounts WHERE user_id = ? AND provider_id = ? FOR UPDATE',
+        [userId, providerId]
+      );
+
+      const poolRefund = Math.min(refundAmount, preDeductedPool);
+      const walletRefund = refundAmount - poolRefund;
+
+      await conn.query(
+        `UPDATE user_accounts
+         SET pool_balance   = pool_balance   + ?,
+             wallet_balance = wallet_balance + ?
+         WHERE user_id = ? AND provider_id = ?`,
+        [poolRefund, walletRefund, userId, providerId]
+      );
+
+      await conn.query(
+        `INSERT INTO credit_ledger
+          (user_id, provider_id, event_type, wallet_delta, pool_delta, task_id, note)
+         VALUES (?, ?, 'confirm_deduct', ?, ?, ?, ?)`,
+        [
+          userId,
+          providerId,
+          walletRefund,
+          poolRefund,
+          taskId,
+          `actual=${actualAmount},pre=${preDeducted},refund=${refundAmount}`,
+        ]
+      );
+    } else if (diff > 0) {
+      const [balRows] = await conn.query<any[]>(
+        'SELECT wallet_balance, pool_balance FROM user_accounts WHERE user_id = ? AND provider_id = ? FOR UPDATE',
+        [userId, providerId]
+      );
+
+      let walletExtra = 0;
+      let poolExtra = 0;
+
+      if (balRows && balRows.length > 0) {
+        const walletBal = Number(balRows[0].wallet_balance);
+        const poolBal = Number(balRows[0].pool_balance);
+
+        poolExtra = Math.min(diff, poolBal);
+        walletExtra = Math.min(diff - poolExtra, walletBal);
+        const totalExtra = poolExtra + walletExtra;
+        shortfallAmount = Math.max(0, diff - totalExtra);
+
+        if (shortfallAmount > 0) {
+          console.warn(
+            `[CreditManager] confirmDeduct: 余额不足以完成追加扣减 (userId=${userId}, providerId=${providerId}, taskId=${taskId}, diff=${diff}, shortfall=${shortfallAmount})`
+          );
+        }
+
+        if (totalExtra > 0) {
+          await conn.query(
+            `UPDATE user_accounts
+             SET pool_balance   = pool_balance   - ?,
+                 wallet_balance = wallet_balance - ?
+             WHERE user_id = ? AND provider_id = ?`,
+            [poolExtra, walletExtra, userId, providerId]
+          );
+        }
+      } else {
+        shortfallAmount = diff;
+        console.warn(
+          `[CreditManager] confirmDeduct: 未找到用户账户，无法完成追加扣减 (userId=${userId}, providerId=${providerId}, taskId=${taskId}, shortfall=${shortfallAmount})`
+        );
+      }
+
+      const noteParts = [`actual=${actualAmount}`, `pre=${preDeducted}`, `extra=${diff}`];
+      if (shortfallAmount > 0) {
+        noteParts.push(`shortfall=${shortfallAmount}`);
+      }
+
+      await conn.query(
+        `INSERT INTO credit_ledger
+          (user_id, provider_id, event_type, wallet_delta, pool_delta, task_id, note)
+         VALUES (?, ?, 'confirm_deduct', ?, ?, ?, ?)`,
+        [userId, providerId, -walletExtra, -poolExtra, taskId, noteParts.join(',')]
+      );
+    } else {
+      await conn.query(
+        `INSERT INTO credit_ledger
+          (user_id, provider_id, event_type, wallet_delta, pool_delta, task_id, note)
+         VALUES (?, ?, 'confirm_deduct', ?, ?, ?, ?)`,
+        [userId, providerId, -preDeductedWallet, -preDeductedPool, taskId, `actual=${actualAmount}`]
+      );
+    }
+
+    if (shortfallAmount > 0) {
+      return {
+        billingStatus: 'undercharged',
+        billingMessage: `计费待补扣：shortfall=${shortfallAmount}, actual=${actualAmount}`,
+        shortfallAmount,
+      };
+    }
+
+    return {
+      billingStatus: 'settled',
+      billingMessage: null,
+      shortfallAmount: 0,
+    };
+  }
+
   /**
    * 充值：计算并存储 wallet_injection_per_cycle、cycles_remaining，写入 Pool，设定 Pool_Baseline
    * Validates: Requirements 1.1, 1.2, 1.3, 1.4, 1.5, 1.6, 1.7, 1.8, 6.1, 6.2, 6.3, 6.4, 6.5, 6.6
@@ -264,128 +409,81 @@ export class CreditManager {
 
   /**
    * 确认消耗（任务成功，实际 credit_cost 可能与预扣不同）
-   * 查询 pre_deduct 记录计算预扣总量，修正差值，并将 credit_usage 插入同一事务
+   * 查询 pre_deduct 记录计算预扣总量，并将差值修正写回 credit_ledger
    * Validates: Requirements 3.1, 3.2, 3.3, 3.4, 6.1
    */
-  async confirmDeduct(userId: number, providerId: string, taskId: string, actualAmount: number): Promise<void> {
+  async confirmDeduct(
+    userId: number,
+    providerId: string,
+    taskId: string,
+    actualAmount: number
+  ): Promise<ConfirmDeductResult> {
+    const conn = await pool.getConnection();
+    try {
+      await conn.beginTransaction();
+      const result = await this.applyConfirmDeductInTransaction(conn, userId, providerId, taskId, actualAmount);
+      await conn.commit();
+      return result;
+    } catch (err) {
+      await conn.rollback();
+      throw err;
+    } finally {
+      conn.release();
+    }
+  }
+
+  async finalizeTaskSuccess(
+    userId: number,
+    providerId: string,
+    taskId: string,
+    outputUrl: string,
+    actualAmount: number,
+    thumbnailUrl?: string
+  ): Promise<ConfirmDeductResult> {
     const conn = await pool.getConnection();
     try {
       await conn.beginTransaction();
 
-      // 1. 查询 pre_deduct 记录，计算预扣总量
-      const [preRows] = await conn.query<any[]>(
-        `SELECT wallet_delta, pool_delta FROM credit_ledger
-         WHERE user_id = ? AND provider_id = ? AND task_id = ? AND event_type = 'pre_deduct'`,
-        [userId, providerId, taskId]
+      const [taskRowsRaw] = await conn.query<any[]>(
+        `SELECT status, error_message
+         FROM tasks
+         WHERE task_id = ?
+         FOR UPDATE`,
+        [taskId]
       );
 
-      // wallet_delta and pool_delta are stored as negative numbers for pre_deduct
-      const preDeductedWallet = (preRows as any[]).reduce(
-        (sum: number, r: any) => sum + Math.abs(Number(r.wallet_delta || 0)), 0
-      );
-      const preDeductedPool = (preRows as any[]).reduce(
-        (sum: number, r: any) => sum + Math.abs(Number(r.pool_delta || 0)), 0
-      );
-      const preDeducted = preDeductedWallet + preDeductedPool;
-
-      // 2. 计算差值
-      const diff = actualAmount - preDeducted;
-
-      if (diff < 0) {
-        // 实际 < 预扣，退还差值，优先补 Pool，再补 Wallet
-        const refundAmount = Math.abs(diff);
-
-        // 读取当前余额以决定退还分配（锁定行）
-        await conn.query(
-          'SELECT id FROM user_accounts WHERE user_id = ? AND provider_id = ? FOR UPDATE',
-          [userId, providerId]
-        );
-
-        // 优先退还到 Pool（最多退还 preDeductedPool），剩余退还到 Wallet
-        const poolRefund = Math.min(refundAmount, preDeductedPool);
-        const walletRefund = refundAmount - poolRefund;
-
-        await conn.query(
-          `UPDATE user_accounts
-           SET pool_balance   = pool_balance   + ?,
-               wallet_balance = wallet_balance + ?
-           WHERE user_id = ? AND provider_id = ?`,
-          [poolRefund, walletRefund, userId, providerId]
-        );
-
-        await conn.query(
-          `INSERT INTO credit_ledger
-            (user_id, provider_id, event_type, wallet_delta, pool_delta, task_id, note)
-           VALUES (?, ?, 'confirm_deduct', ?, ?, ?, ?)`,
-          [userId, providerId, walletRefund, poolRefund, taskId, `actual=${actualAmount},pre=${preDeducted},refund=${refundAmount}`]
-        );
-      } else if (diff > 0) {
-        // 实际 > 预扣，追加扣减，优先扣 Pool，再扣 Wallet；余额不足时记录 warning，不抛错
-        const [balRows] = await conn.query<any[]>(
-          'SELECT wallet_balance, pool_balance FROM user_accounts WHERE user_id = ? AND provider_id = ? FOR UPDATE',
-          [userId, providerId]
-        );
-
-        if (balRows && balRows.length > 0) {
-          const walletBal = Number(balRows[0].wallet_balance);
-          const poolBal = Number(balRows[0].pool_balance);
-
-          const poolExtra = Math.min(diff, poolBal);
-          const walletExtra = Math.min(diff - poolExtra, walletBal);
-          const totalExtra = poolExtra + walletExtra;
-
-          if (totalExtra < diff) {
-            console.warn(
-              `[CreditManager] confirmDeduct: 余额不足以追加扣减 (userId=${userId}, providerId=${providerId}, taskId=${taskId}, diff=${diff}, available=${totalExtra})`
-            );
-          }
-
-          if (totalExtra > 0) {
-            await conn.query(
-              `UPDATE user_accounts
-               SET pool_balance   = pool_balance   - ?,
-                   wallet_balance = wallet_balance - ?
-               WHERE user_id = ? AND provider_id = ?`,
-              [poolExtra, walletExtra, userId, providerId]
-            );
-          }
-
-          await conn.query(
-            `INSERT INTO credit_ledger
-              (user_id, provider_id, event_type, wallet_delta, pool_delta, task_id, note)
-             VALUES (?, ?, 'confirm_deduct', ?, ?, ?, ?)`,
-            [userId, providerId, -walletExtra, -poolExtra, taskId,
-             `actual=${actualAmount},pre=${preDeducted},extra=${diff}`]
-          );
-        } else {
-          // No account row — just log warning
-          console.warn(
-            `[CreditManager] confirmDeduct: 未找到用户账户 (userId=${userId}, providerId=${providerId}, taskId=${taskId})`
-          );
-          await conn.query(
-            `INSERT INTO credit_ledger
-              (user_id, provider_id, event_type, wallet_delta, pool_delta, task_id, note)
-             VALUES (?, ?, 'confirm_deduct', ?, 0, ?, ?)`,
-            [userId, providerId, -actualAmount, taskId, `actual=${actualAmount},pre=${preDeducted}`]
-          );
-        }
-      } else {
-        // diff === 0，无需调整余额，按预扣比例记录 ledger
-        await conn.query(
-          `INSERT INTO credit_ledger
-            (user_id, provider_id, event_type, wallet_delta, pool_delta, task_id, note)
-           VALUES (?, ?, 'confirm_deduct', ?, ?, ?, ?)`,
-          [userId, providerId, -preDeductedWallet, -preDeductedPool, taskId, `actual=${actualAmount}`]
-        );
+      const taskRows = taskRowsRaw as TaskRowForBilling[];
+      const task = taskRows?.[0];
+      if (!task) {
+        throw new Error(`任务不存在: ${taskId}`);
       }
 
-      // 3. 写入 credit_usage（Fix 6 合并：与 ledger 在同一事务）
+      if (task.status === 'success') {
+        await conn.commit();
+        const billingMessage = task.error_message?.startsWith('计费待补扣：') ? task.error_message : null;
+        return {
+          billingStatus: billingMessage ? 'undercharged' : 'settled',
+          billingMessage,
+          shortfallAmount: 0,
+        };
+      }
+
+      const result = await this.applyConfirmDeductInTransaction(conn, userId, providerId, taskId, actualAmount);
+
       await conn.query(
-        'INSERT INTO credit_usage (user_id, task_id, credits_used) VALUES (?, ?, ?)',
-        [userId, taskId, actualAmount]
+        `UPDATE tasks
+         SET status = 'success',
+             output_url = ?,
+             thumbnail_url = ?,
+             credit_cost = ?,
+             error_message = ?,
+             completed_at = NOW()
+         WHERE task_id = ?`,
+        [outputUrl, thumbnailUrl ?? null, actualAmount, result.billingMessage, taskId]
       );
 
       await conn.commit();
+      return result;
     } catch (err) {
       await conn.rollback();
       throw err;

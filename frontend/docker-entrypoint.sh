@@ -258,10 +258,10 @@ API_LOCATIONS="$CHAIN_RESULT"
 generate_lb_config "APP_BACKEND" "/backend/" "backend"
 BACKEND_LOCATIONS="$CHAIN_RESULT"
 
-RESOLVER_SERVERS="${APP_RESOLVER:-127.0.0.11 8.8.8.8}"
-RESOLVER_BLOCK="resolver ${RESOLVER_SERVERS} valid=30s ipv6=off;
-resolver_timeout 5s;"
-echo "[entrypoint] DNS resolver: ${RESOLVER_SERVERS} (valid=30s)"
+RESOLVER_SERVERS="${APP_RESOLVER:-127.0.0.11}"
+RESOLVER_BLOCK="resolver ${RESOLVER_SERVERS} valid=300s ipv6=off;
+resolver_timeout 10s;"
+echo "[entrypoint] DNS resolver: ${RESOLVER_SERVERS} (valid=300s)"
 
 cp "$TEMPLATE" "$OUTPUT"
 

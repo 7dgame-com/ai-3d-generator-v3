@@ -3,10 +3,10 @@
     <h2>{{ t('history.title') }}</h2>
     <p>{{ t('history.summary', { total: summary?.totalCredits ?? 0, month: summary?.monthCredits ?? 0, tasks: summary?.taskCount ?? 0 }) }}</p>
     <el-table :data="history">
-      <el-table-column prop="taskId" label="Task ID" />
-      <el-table-column prop="type" label="Type" />
-      <el-table-column prop="creditsUsed" label="Credits" />
-      <el-table-column prop="status" label="Status" />
+      <el-table-column prop="taskId" :label="t('history.colTaskId')" />
+      <el-table-column prop="type" :label="t('history.colType')" />
+      <el-table-column prop="creditsUsed" :label="t('history.colCredits')" />
+      <el-table-column prop="status" :label="t('history.colStatus')" />
     </el-table>
   </section>
 </template>

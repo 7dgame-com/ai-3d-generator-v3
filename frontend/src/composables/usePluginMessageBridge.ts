@@ -1,5 +1,21 @@
 import { ref, onMounted, onBeforeUnmount } from 'vue'
 
+// ── Module-level INIT gate ──────────────────────────────────
+
+/** Resolves when the first INIT message is received (token available). */
+let _initResolve: (() => void) | null = null
+const _initPromise = new Promise<void>((resolve) => {
+  _initResolve = resolve
+})
+
+/**
+ * Returns a promise that resolves once the INIT message has been received
+ * and the token has been stored. Safe to call from router guards.
+ */
+export function waitForInit(): Promise<void> {
+  return _initPromise
+}
+
 // ── Types ───────────────────────────────────────────────────
 
 /** Standard message envelope for iframe ↔ host communication. */
@@ -107,7 +123,6 @@ export function usePluginMessageBridge(
   // ── Built-in handlers ───────────────────────────────────
 
   function handleInit(payload: Record<string, unknown>) {
-    console.log('[PluginMessageBridge:handshake] received INIT', { hasToken: !!payload.token, configKeys: Object.keys(payload.config || {}) })
     token.value = (payload.token as string) ?? null
     config.value = (payload.config as Record<string, unknown>) ?? {}
     isReady.value = true
@@ -138,8 +153,6 @@ export function usePluginMessageBridge(
 
       const msg = event.data as StandardMessage
       if (!msg || typeof msg.type !== 'string') return
-
-      console.log(`[PluginMessageBridge:handshake] received message type="${msg.type}"`, msg.payload ? { payloadKeys: Object.keys(msg.payload) } : '(no payload)')
 
       // Track REQUEST id for RESPONSE pairing
       if (msg.type === 'REQUEST') {
@@ -172,9 +185,13 @@ export function usePluginMessageBridge(
   // ── Lifecycle ───────────────────────────────────────────
 
   onMounted(() => {
-    console.log('[PluginMessageBridge:handshake] onMounted, registering listener and sending PLUGIN_READY, isInIframe=', window.parent !== window)
     window.addEventListener('message', handleMessage)
-    postMessage('PLUGIN_READY')
+    // Only send PLUGIN_READY once per page load to avoid handshake loops
+    const bridgeWindow = window as Window & { __PLUGIN_READY_SENT__?: boolean }
+    if (!bridgeWindow.__PLUGIN_READY_SENT__) {
+      bridgeWindow.__PLUGIN_READY_SENT__ = true
+      postMessage('PLUGIN_READY')
+    }
   })
 
   onBeforeUnmount(() => {

@@ -88,10 +88,16 @@ export class Tripo3DAdapter implements IProviderAdapter {
         task_id: string;
         status: string;
         progress?: number;
-        output?: { model?: string; pbr_model?: string };
+        thumbnail?: string;
+        output?: {
+          model?: string;
+          pbr_model?: string;
+          rendered_image?: string | { url?: string };
+        };
         result?: {
           credit_cost?: number;
           pbr_model?: { url?: string; type?: string };
+          rendered_image?: { url?: string; type?: string };
         };
       };
     };
@@ -117,12 +123,19 @@ export class Tripo3DAdapter implements IProviderAdapter {
       taskData.result?.pbr_model?.url ??
       taskData.output?.pbr_model ??
       taskData.output?.model;
+    const thumbnailUrl =
+      taskData.thumbnail ??
+      taskData.result?.rendered_image?.url ??
+      (typeof taskData.output?.rendered_image === 'string'
+        ? taskData.output.rendered_image
+        : taskData.output?.rendered_image?.url);
 
     return {
       status,
       progress: taskData.progress ?? 0,
       creditCost: taskData.result?.credit_cost,
       outputUrl,
+      thumbnailUrl,
       errorMessage: status === 'failed' ? '任务生成失败' : undefined,
     };
   }

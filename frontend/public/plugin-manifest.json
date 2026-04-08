@@ -2,15 +2,27 @@
   "id": "ai-3d-generator-v3",
   "schemaVersion": "1",
   "nameI18n": {
-    "zh-CN": "AI 3D 生成器 V3"
+    "zh-CN": "AI 3D 生成器 V3",
+    "zh-TW": "AI 3D 產生器 V3",
+    "en-US": "AI 3D Generator V3",
+    "ja-JP": "AI 3D ジェネレーター V3",
+    "th-TH": "AI 3D Generator V3"
   },
   "descriptionI18n": {
-    "zh-CN": "基于 Tripo3D、Hyper3D 和 COS 的独立 3D 生成插件"
+    "zh-CN": "基于 Tripo3D、Hyper3D 和 COS 的独立 3D 生成插件",
+    "zh-TW": "基於 Tripo3D、Hyper3D 和 COS 的獨立 3D 生成外掛",
+    "en-US": "Standalone 3D generation plugin powered by Tripo3D, Hyper3D and COS",
+    "ja-JP": "Tripo3D、Hyper3D、COS を利用した独立型 3D 生成プラグイン",
+    "th-TH": "ปลั๊กอินสร้างโมเดล 3D แบบแยกอิสระที่ขับเคลื่อนด้วย Tripo3D, Hyper3D และ COS"
   },
   "group": {
     "id": "tools",
     "nameI18n": {
-      "zh-CN": "实用工具"
+      "zh-CN": "实用工具",
+      "zh-TW": "實用工具",
+      "en-US": "Tools",
+      "ja-JP": "ユーティリティ",
+      "th-TH": "เครื่องมือ"
     }
   }
 }

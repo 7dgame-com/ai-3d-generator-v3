@@ -3,9 +3,9 @@ import COS from 'cos-js-sdk-v5'
 import {
   createFileRecord,
   createResourceRecord,
+  downloadTaskBuffer,
   getCloudConfig,
   getCosToken,
-  getDownloadUrl,
   updateTaskResource,
 } from '../api'
 
@@ -18,13 +18,11 @@ export function useUploadService() {
     uploadError.value = null
 
     try {
-      const [{ data: downloadData }, { data: cloudData }, { data: tokenData }] = await Promise.all([
-        getDownloadUrl(taskId),
+      const [{ data: modelBuffer }, { data: cloudData }, { data: tokenData }] = await Promise.all([
+        downloadTaskBuffer(taskId),
         getCloudConfig(),
         getCosToken(),
       ])
-
-      const buffer = await fetch(downloadData.url).then((response) => response.arrayBuffer())
       const objectKey = `ai-3d-generator-v3/${taskId}.glb`
 
       const cos = new COS({
@@ -54,7 +52,7 @@ export function useUploadService() {
             Bucket: cloudData.bucket,
             Region: cloudData.region,
             Key: objectKey,
-            Body: new Blob([buffer]),
+            Body: new Blob([modelBuffer]),
             onProgress: (info: { percent: number }) => onProgress(Math.round(info.percent * 100)),
           },
           (error: Error | null, data: { Location?: string }) => {

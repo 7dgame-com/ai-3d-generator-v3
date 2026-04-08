@@ -16,6 +16,7 @@ export interface TaskStatusOutput {
   progress: number;
   creditCost?: number;
   outputUrl?: string;
+  thumbnailUrl?: string;
   errorMessage?: string;
 }
 

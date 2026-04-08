@@ -3,7 +3,6 @@ import type { AxiosError, AxiosInstance, InternalAxiosRequestConfig } from 'axio
 import {
   getToken,
   isInIframe,
-  removeAllTokens,
   requestParentTokenRefresh,
   setToken,
 } from '../utils/token'
@@ -68,17 +67,31 @@ function setupInterceptors(instance: AxiosInstance) {
       isRefreshing = true
 
       try {
-        const refreshed = isInIframe() ? await requestParentTokenRefresh() : null
-        if (!refreshed?.accessToken) {
+        // Check if TOKEN_UPDATE already delivered a newer token (race condition fix)
+        const staleToken = originalRequest.headers.Authorization?.toString().replace('Bearer ', '')
+        const currentToken = getToken()
+        let freshToken: string | null = null
+
+        if (currentToken && currentToken !== staleToken) {
+          // Token was already refreshed via TOKEN_UPDATE broadcast — use it directly
+          freshToken = currentToken
+        } else if (isInIframe()) {
+          // Token not yet updated — request from parent
+          const refreshed = await requestParentTokenRefresh()
+          freshToken = refreshed?.accessToken ?? null
+        }
+
+        if (!freshToken) {
           throw new Error('Token refresh failed')
         }
 
-        setToken(refreshed.accessToken)
-        processQueue(null, refreshed.accessToken)
-        originalRequest.headers.Authorization = `Bearer ${refreshed.accessToken}`
+        setToken(freshToken)
+        processQueue(null, freshToken)
+        originalRequest.headers.Authorization = `Bearer ${freshToken}`
         return instance(originalRequest)
       } catch (refreshError) {
-        removeAllTokens()
+        // Don't wipe tokens on refresh failure — avoid triggering reload loops.
+        // The plugin will get a fresh token on next TOKEN_UPDATE from the host.
         processQueue(
           refreshError instanceof Error ? refreshError : new Error('Token refresh failed'),
           null
@@ -98,16 +111,20 @@ export type TaskStatus = 'queued' | 'processing' | 'success' | 'failed' | 'timeo
 
 export interface Task {
   taskId: string
+  providerId?: string
   type: 'text_to_model' | 'image_to_model'
   prompt: string | null
   status: TaskStatus
   progress: number
   creditCost: number
   outputUrl: string | null
+  thumbnailUrl: string | null
+  thumbnailExpired: boolean
   resourceId: number | null
   errorMessage: string | null
   createdAt: string
   completedAt: string | null
+  downloadExpired?: boolean
 }
 
 export interface UsageHistoryItem {
@@ -135,11 +152,15 @@ export const createTask = (payload: {
   imageBase64?: string
   mimeType?: string
   provider_id?: string
-}) => backendApi.post<{ taskId: string; status: TaskStatus }>('/tasks', payload)
+}) => backendApi.post<{ taskId: string; status: TaskStatus }>('/tasks', payload, { timeout: 90000 })
 
 export const listTasks = () => backendApi.get<{ data: Task[]; total: number }>('/tasks')
 export const getTask = (taskId: string) => backendApi.get<Task>(`/tasks/${taskId}`)
 export const getDownloadUrl = (taskId: string) => backendApi.get<{ url: string }>(`/tasks/${taskId}/download-url`)
+export const downloadTaskFile = (taskId: string) =>
+  backendApi.get<Blob>(`/download/${taskId}`, { responseType: 'blob' })
+export const downloadTaskBuffer = (taskId: string) =>
+  backendApi.get<ArrayBuffer>(`/download/${taskId}`, { responseType: 'arraybuffer' })
 export const updateTaskResource = (taskId: string, resourceId: number) =>
   backendApi.put<{ success: boolean }>(`/tasks/${taskId}/resource`, { resource_id: resourceId })
 
@@ -189,6 +210,9 @@ export const getUsageSummary = () =>
     taskCount: number
     dailyTrend: Array<{ date: string; credits: number }>
   }>('/usage')
+
+export const fetchThumbnailBlob = (taskId: string) =>
+  backendApi.get<Blob>(`/thumbnail/${taskId}`, { responseType: 'blob' })
 
 export const getUsageHistory = (params?: {
   startDate?: string

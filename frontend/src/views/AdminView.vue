@@ -122,7 +122,7 @@ import {
 } from '../api'
 import { useI18n } from 'vue-i18n'
 
-const { t } = useI18n()
+const { t, locale } = useI18n()
 const providers = ref<string[]>([])
 const configs = reactive<Record<string, { configured: boolean; apiKeyMasked?: string }>>({})
 const balances = reactive<Record<string, number | undefined>>({})
@@ -167,13 +167,13 @@ async function save(provider: string) {
     draftKeys[provider] = ''
     ElMessage.success(t('common.saved'))
   } catch (error) {
-    ElMessage.error(error instanceof Error ? error.message : '保存失败')
+    ElMessage.error(error instanceof Error ? error.message : t('common.saveFailed'))
   }
 }
 
 async function loadQuotaStatus() {
   if (!targetUserId.value) {
-    ElMessage.warning(`${t('admin.userId')}不能为空`)
+    ElMessage.warning(t('common.required', { field: t('admin.userId') }))
     return
   }
 
@@ -183,7 +183,7 @@ async function loadQuotaStatus() {
     quotaStatuses.value = response.data.data ?? []
     ElMessage.success(t('admin.quotaLoaded'))
   } catch (error) {
-    ElMessage.error(error instanceof Error ? error.message : '查询额度失败')
+    ElMessage.error(error instanceof Error ? error.message : t('admin.queryFailed'))
   } finally {
     quotaLoading.value = false
   }
@@ -191,11 +191,11 @@ async function loadQuotaStatus() {
 
 async function submitRecharge() {
   if (!targetUserId.value) {
-    ElMessage.warning(`${t('admin.userId')}不能为空`)
+    ElMessage.warning(t('common.required', { field: t('admin.userId') }))
     return
   }
   if (!rechargeForm.provider_id) {
-    ElMessage.warning(`${t('admin.provider')}不能为空`)
+    ElMessage.warning(t('common.required', { field: t('admin.provider') }))
     return
   }
 
@@ -212,7 +212,7 @@ async function submitRecharge() {
     ElMessage.success(t('admin.rechargeSuccess'))
     await loadQuotaStatus()
   } catch (error) {
-    ElMessage.error(error instanceof Error ? error.message : '充值失败')
+    ElMessage.error(error instanceof Error ? error.message : t('admin.rechargeFailed'))
   } finally {
     rechargeLoading.value = false
   }
@@ -222,7 +222,7 @@ function formatDateTime(value: string | null) {
   if (!value) {
     return '-'
   }
-  return new Date(value).toLocaleString('zh-CN')
+  return new Date(value).toLocaleString(locale.value)
 }
 </script>
 

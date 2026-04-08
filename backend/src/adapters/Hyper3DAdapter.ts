@@ -9,6 +9,8 @@ import {
 } from './IProviderAdapter';
 
 const HYPER3D_API_BASE = process.env.HYPER3D_API_BASE || 'https://api.hyper3d.com/api/v2';
+const MAX_RENDER_WAIT_POLLS = 10;
+const renderWaitCounts = new Map<string, number>();
 
 interface HyperTaskPair {
   uuid: string;
@@ -60,17 +62,18 @@ export class Hyper3DAdapter implements IProviderAdapter {
 
   async createTask(apiKey: string, input: CreateTaskInput): Promise<CreateTaskOutput> {
     const form = new FormData();
-    form.append('tier', 'Regular');
+    form.append('tier', 'Gen-2');
     form.append('geometry_file_format', 'glb');
     form.append('material', 'PBR');
-    form.append('quality', 'medium');
+    form.append('quality', 'high');
+    form.append('mesh_mode', 'Quad');
+    form.append('preview_render', 'true');
 
     if (input.prompt) {
       form.append('prompt', input.prompt);
     }
 
     if (input.type === 'image_to_model' && input.imageBase64) {
-      form.append('condition_mode', 'concat');
       const buffer = Buffer.from(input.imageBase64, 'base64');
       form.append('images', buffer, {
         filename: 'reference',
@@ -83,12 +86,14 @@ export class Hyper3DAdapter implements IProviderAdapter {
         Authorization: `Bearer ${apiKey}`,
         ...form.getHeaders(),
       },
-      timeout: 30000,
+      timeout: 60000,
     });
 
     if (response.data?.error) {
       throw new Error(response.data.error);
     }
+
+    console.log('[Hyper3DAdapter] createTask response:', JSON.stringify(response.data));
 
     const taskId = response.data?.uuid;
     const pollingKey = Array.isArray(response.data?.jobs)
@@ -99,11 +104,7 @@ export class Hyper3DAdapter implements IProviderAdapter {
       throw new Error('Hyper3D API 未返回任务 ID');
     }
 
-    return {
-      taskId,
-      pollingKey: pollingKey ?? taskId,
-      estimatedCost: 30,
-    };
+    return { taskId, pollingKey: pollingKey ?? taskId, estimatedCost: 1 };
   }
 
   async getTaskStatus(apiKey: string, taskId: string, pollingKey?: string): Promise<TaskStatusOutput> {
@@ -124,13 +125,27 @@ export class Hyper3DAdapter implements IProviderAdapter {
       throw new Error(response.data.error);
     }
 
-    const currentTask = response.data?.jobs?.find((job) => job.uuid === taskId) ?? response.data?.jobs?.[0];
-    if (!currentTask) {
-      throw new Error('Hyper3D 状态返回为空');
+    const jobs = response.data?.jobs ?? [];
+    if (jobs.length === 0) {
+      return {
+        status: 'queued',
+        progress: 0,
+      };
     }
 
-    const rawStatus = currentTask.status;
-    if (rawStatus === 'Done') {
+    if (jobs.some((job) => job.status === 'Failed')) {
+      renderWaitCounts.delete(taskId);
+      return {
+        status: 'failed',
+        progress: 0,
+        errorMessage: '任务生成失败',
+      };
+    }
+
+    const doneCount = jobs.filter((job) => job.status === 'Done').length;
+    const progress = Math.round((doneCount / jobs.length) * 100);
+
+    if (doneCount === jobs.length) {
       const download = await axios.post<HyperDownloadResponse>(
         `${HYPER3D_API_BASE}/download`,
         { task_uuid: taskId },
@@ -147,34 +162,66 @@ export class Hyper3DAdapter implements IProviderAdapter {
       const file =
         download.data?.list?.find(
           (item) => item.filename?.endsWith('.glb') || item.name?.endsWith('.glb') || item.type === 'glb'
-        ) ??
-        download.data?.list?.[0];
+        );
+
+      // 记录 download 列表，便于调试缩略图匹配
+      console.log('[Hyper3DAdapter] download list names:', download.data?.list?.map((i) => i.name ?? i.filename));
+
+      // Gen-2 可能 status=Done 但 glb 还在打包中，此时继续轮询
+      if (!file) {
+        renderWaitCounts.delete(taskId);
+        return {
+          status: 'processing',
+          progress: 90,
+        };
+      }
+
+      const renderThumbnail = download.data?.list?.find(
+          (item) =>
+            item.filename === 'render.jpg' ||
+            item.name === 'render.jpg'
+        );
+      const previewThumbnail = download.data?.list?.find(
+          (item) =>
+            item.filename?.includes('preview.webp') ||
+            item.name?.includes('preview.webp') ||
+            item.url?.includes('preview.webp')
+        );
+
+      if (!renderThumbnail && previewThumbnail) {
+        const nextWaitCount = (renderWaitCounts.get(taskId) ?? 0) + 1;
+        renderWaitCounts.set(taskId, nextWaitCount);
+
+        if (nextWaitCount <= MAX_RENDER_WAIT_POLLS) {
+          console.log(
+            `[Hyper3DAdapter] glb ready but render.jpg not yet available, continuing poll (attempt ${nextWaitCount}/${MAX_RENDER_WAIT_POLLS})`
+          );
+          return {
+            status: 'processing',
+            progress: 95,
+          };
+        }
+
+        console.log(
+          `[Hyper3DAdapter] render.jpg still missing after ${MAX_RENDER_WAIT_POLLS} polls, falling back to preview.webp`
+        );
+      }
+
+      renderWaitCounts.delete(taskId);
 
       return {
         status: 'success',
         progress: 100,
+        creditCost: 0.5,
         outputUrl: file?.url,
+        thumbnailUrl: renderThumbnail?.url ?? previewThumbnail?.url,
       };
     }
 
-    if (rawStatus === 'Failed') {
-      return {
-        status: 'failed',
-        progress: 0,
-        errorMessage: '任务生成失败',
-      };
-    }
-
-    if (rawStatus === 'Generating') {
-      return {
-        status: 'processing',
-        progress: 50,
-      };
-    }
-
+    renderWaitCounts.delete(taskId);
     return {
-      status: 'queued',
-      progress: 0,
+      status: 'processing',
+      progress,
     };
   }
 

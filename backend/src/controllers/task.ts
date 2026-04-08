@@ -5,8 +5,12 @@ import { addTaskToPoller } from '../services/taskPoller';
 import { AuthenticatedRequest } from '../middleware/auth';
 import { creditManager, computeThrottleDelay, sleep, DeductResult } from '../services/creditManager';
 import { providerRegistry } from '../adapters/ProviderRegistry';
+import { isDownloadExpired } from '../utils/urlExpiry';
 
-const ESTIMATED_CREDIT_COST = 30;
+const ESTIMATED_CREDIT_COST: Record<string, number> = {
+  tripo3d: 30,
+  hyper3d: 1,
+};
 const DEFAULT_MAX_THROTTLE_DELAY_MS = 30000;
 
 interface AccountSnapshot {
@@ -134,7 +138,8 @@ export async function createTask(req: Request, res: Response): Promise<void> {
 
   // Step 2: Pre-deduct credits BEFORE calling provider API
   let preDeductResult: DeductResult | null = null;
-  if (totalBalance < ESTIMATED_CREDIT_COST) {
+  const estimatedCost = ESTIMATED_CREDIT_COST[providerId] ?? 30;
+  if (totalBalance < estimatedCost) {
     res.status(422).json({ code: 'INSUFFICIENT_CREDITS', message: '额度不足' });
     return;
   }
@@ -146,7 +151,7 @@ export async function createTask(req: Request, res: Response): Promise<void> {
   // Use a temp taskId for pre-deduction; will be updated after provider returns real task_id
   const tempTaskId = `temp:${userId}:${Date.now()}`;
   try {
-    preDeductResult = await creditManager.preDeduct(userId, providerId, ESTIMATED_CREDIT_COST, tempTaskId);
+    preDeductResult = await creditManager.preDeduct(userId, providerId, estimatedCost, tempTaskId);
     if (!preDeductResult.success) {
       if (preDeductResult.errorCode === 'INSUFFICIENT_CREDITS') {
         res.status(422).json({ code: 'INSUFFICIENT_CREDITS', message: '额度不足' });
@@ -223,24 +228,36 @@ export async function listTasks(req: Request, res: Response): Promise<void> {
   const offset = (page - 1) * pageSize;
   try {
     const rows = await query<Array<Record<string, unknown>>>(
-      'SELECT task_id, type, prompt, status, progress, credit_cost, output_url, resource_id, error_message, created_at, completed_at FROM tasks WHERE user_id = ? ORDER BY created_at DESC LIMIT ? OFFSET ?',
+      'SELECT task_id, provider_id, type, prompt, status, progress, credit_cost, output_url, thumbnail_url, resource_id, error_message, created_at, completed_at FROM tasks WHERE user_id = ? ORDER BY created_at DESC LIMIT ? OFFSET ?',
       [userId, pageSize, offset]
     );
     const countRows = await query<Array<{ total: number }>>('SELECT COUNT(*) AS total FROM tasks WHERE user_id = ?', [userId]);
     res.json({
-      data: rows.map((row) => ({
-        taskId: row.task_id,
-        type: row.type,
-        prompt: row.prompt,
-        status: row.status,
-        progress: row.progress,
-        creditCost: row.credit_cost,
-        outputUrl: row.output_url,
-        resourceId: row.resource_id,
-        errorMessage: row.error_message,
-        createdAt: row.created_at,
-        completedAt: row.completed_at,
-      })),
+      data: rows.map((row) => {
+        const downloadExpired = row.status === 'success'
+          ? isDownloadExpired(row.output_url as string | null, row.completed_at as string | null)
+          : false;
+        const thumbnailExpired = row.status === 'success' && row.thumbnail_url
+          ? isDownloadExpired(row.thumbnail_url as string | null, row.completed_at as string | null)
+          : false;
+        return {
+          taskId: row.task_id,
+          providerId: row.provider_id,
+          type: row.type,
+          prompt: row.prompt,
+          status: row.status,
+          progress: row.progress,
+          creditCost: row.credit_cost,
+          outputUrl: row.output_url,
+          thumbnailUrl: row.thumbnail_url ?? null,
+          thumbnailExpired,
+          resourceId: row.resource_id,
+          errorMessage: row.error_message,
+          createdAt: row.created_at,
+          completedAt: row.completed_at,
+          downloadExpired,
+        };
+      }),
       total: Number(countRows[0]?.total ?? 0),
       page,
       pageSize,
@@ -256,19 +273,29 @@ export async function getTask(req: Request, res: Response): Promise<void> {
   const { taskId } = req.params;
   try {
     const rows = await query<Array<Record<string, unknown>>>(
-      'SELECT task_id, type, prompt, status, progress, credit_cost, output_url, resource_id, error_message, created_at, completed_at FROM tasks WHERE task_id = ? AND user_id = ? LIMIT 1',
+      'SELECT task_id, provider_id, type, prompt, status, progress, credit_cost, output_url, thumbnail_url, resource_id, error_message, created_at, completed_at FROM tasks WHERE task_id = ? AND user_id = ? LIMIT 1',
       [taskId, userId]
     );
     if (!rows || rows.length === 0) { res.status(404).json({ code: 4004, message: '任务不存在' }); return; }
     const row = rows[0];
+    const downloadExpired = row.status === 'success'
+      ? isDownloadExpired(row.output_url as string | null, row.completed_at as string | null)
+      : false;
+    const thumbnailExpired = row.status === 'success' && row.thumbnail_url
+      ? isDownloadExpired(row.thumbnail_url as string | null, row.completed_at as string | null)
+      : false;
     res.json({
       taskId: row.task_id,
+      providerId: row.provider_id,
       type: row.type,
       prompt: row.prompt,
       status: row.status,
       progress: row.progress,
       creditCost: row.credit_cost,
       outputUrl: row.output_url,
+      thumbnailUrl: row.thumbnail_url ?? null,
+      thumbnailExpired,
+      downloadExpired,
       resourceId: row.resource_id,
       errorMessage: row.error_message,
       createdAt: row.created_at,
