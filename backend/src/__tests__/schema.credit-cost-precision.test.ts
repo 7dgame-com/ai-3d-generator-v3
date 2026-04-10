@@ -38,4 +38,20 @@ describe('database credit cost precision', () => {
     expect(migration).toContain('CREATE TABLE IF NOT EXISTS power_ledger');
     expect(migration).toContain('CREATE TABLE IF NOT EXISTS power_jobs');
   });
+
+  it('defines dedicated site power tables in schema.sql', () => {
+    const schema = readDbFile('schema.sql');
+
+    expect(schema).toContain('CREATE TABLE site_power_accounts');
+    expect(schema).toContain('CREATE TABLE site_power_ledger');
+    expect(schema).toContain('CREATE TABLE site_power_jobs');
+  });
+
+  it('includes a migration that creates dedicated site power tables', () => {
+    const migration = readDbFile('migrate_site_power.sql');
+
+    expect(migration).toContain('CREATE TABLE IF NOT EXISTS site_power_accounts');
+    expect(migration).toContain('CREATE TABLE IF NOT EXISTS site_power_ledger');
+    expect(migration).toContain('CREATE TABLE IF NOT EXISTS site_power_jobs');
+  });
 });
