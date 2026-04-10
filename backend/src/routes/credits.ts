@@ -1,9 +1,12 @@
 /**
  * Credits 路由
  *
- * GET /credits/status              — auth（当前用户额度状态）
- * GET /admin/credits/:userId       — auth + requirePermission('admin-config')（管理员查询）
- * POST /admin/recharge             — auth + requirePermission('admin-config')（管理员充值）
+ * GET /credits/status              — auth（站点共享额度状态）
+ * GET /admin/site-power-status     — auth + requirePermission('admin-config')（站点共享额度查询）
+ * POST /admin/site-power-recharge  — auth + requirePermission('admin-config')（站点共享额度充值）
+ *
+ * Legacy user-targeted admin endpoints remain mounted below for backend compatibility
+ * during the rollout, but the frontend should no longer call them.
  */
 
 import { Router, RequestHandler } from 'express';

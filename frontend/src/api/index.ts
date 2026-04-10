@@ -279,22 +279,11 @@ export const getCreditStatus = (providerId?: string) =>
 export const getSitePowerStatus = () =>
   backendApi.get<{ data: PowerAccountStatus }>('/admin/site-power-status')
 
-export const getAdminCreditStatus = (userId: number) =>
-  backendApi.get<{ data: PowerAccountStatus }>(`/admin/credits/${userId}`)
-
 export const rechargeSitePower = (payload: SitePowerRechargePayload) =>
   backendApi.post<{ success: boolean; data: PowerAccountStatus }>(
     '/admin/site-power-recharge',
     payload
   )
-
-export const rechargeAdminCredits = (payload: {
-  userId: number
-  wallet_amount: number
-  pool_amount: number
-  total_duration: number
-  cycle_duration: number
-}) => backendApi.post<{ success: boolean }>('/admin/recharge', payload)
 
 export const getUsageSummary = () =>
   backendApi.get<{
