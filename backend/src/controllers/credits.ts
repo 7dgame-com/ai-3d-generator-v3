@@ -8,15 +8,14 @@
 
 import { Response } from 'express';
 import { AuthenticatedRequest } from '../middleware/auth';
-import { creditManager } from '../services/creditManager';
+import { powerManager, zeroPowerAccountStatus } from '../services/powerManager';
 import { scheduleNextCycle } from '../services/quotaScheduler';
 
 export async function getStatusHandler(req: AuthenticatedRequest, res: Response): Promise<void> {
   const userId = req.user.userId;
-  const providerId = req.query.provider_id as string | undefined;
   try {
-    const status = await creditManager.getStatus(userId, providerId);
-    res.json({ data: status });
+    const status = await powerManager.getAccountStatus(userId);
+    res.json({ data: status ?? zeroPowerAccountStatus() });
   } catch (err) {
     console.error('[CreditsController] GET /credits/status error:', err);
     res.status(500).json({ code: 5001, message: '服务器内部错误' });
@@ -24,9 +23,8 @@ export async function getStatusHandler(req: AuthenticatedRequest, res: Response)
 }
 
 export async function rechargeHandler(req: AuthenticatedRequest, res: Response): Promise<void> {
-  const { userId, provider_id, wallet_amount, pool_amount, total_duration, cycle_duration } = req.body as {
+  const { userId, wallet_amount, pool_amount, total_duration, cycle_duration } = req.body as {
     userId: number;
-    provider_id?: string;
     wallet_amount: number;
     pool_amount: number;
     total_duration: number;
@@ -38,21 +36,14 @@ export async function rechargeHandler(req: AuthenticatedRequest, res: Response):
     return;
   }
 
-  if (!provider_id) {
-    res.status(422).json({ code: 'MISSING_PROVIDER', message: '缺少 provider_id 参数' });
-    return;
-  }
-
   try {
-    await creditManager.recharge(userId, provider_id, { wallet_amount, pool_amount, total_duration, cycle_duration });
-    const status = await creditManager.getStatus(userId, provider_id);
-    const providerStatus = status[0];
-    if (providerStatus?.next_cycle_at) {
+    await powerManager.recharge(userId, { wallet_amount, pool_amount, total_duration, cycle_duration });
+    const status = await powerManager.getAccountStatus(userId);
+    if (status?.next_cycle_at) {
       await scheduleNextCycle(
         userId,
-        provider_id,
-        cycle_duration,
-        new Date(providerStatus.next_cycle_at)
+        status.cycle_duration || cycle_duration,
+        new Date(status.next_cycle_at)
       );
     }
     res.json({ success: true });
@@ -74,8 +65,8 @@ export async function getAdminStatusHandler(req: AuthenticatedRequest, res: Resp
     return;
   }
   try {
-    const status = await creditManager.getStatus(userId);
-    res.json({ data: status });
+    const status = await powerManager.getAccountStatus(userId);
+    res.json({ data: status ?? zeroPowerAccountStatus() });
   } catch (err) {
     console.error('[CreditsController] GET /admin/credits/:userId error:', err);
     res.status(500).json({ code: 5001, message: '服务器内部错误' });

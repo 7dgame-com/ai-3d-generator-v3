@@ -10,7 +10,7 @@ const mocks = vi.hoisted(() => ({
   checkCredits: vi.fn(),
   triggerDialog: vi.fn(),
   closeDialog: vi.fn(),
-  createTask: vi.fn(),
+  directCreateTask: vi.fn(),
   downloadTaskFile: vi.fn(),
   getEnabledProviders: vi.fn(),
   listTasks: vi.fn(),
@@ -24,7 +24,6 @@ const mocks = vi.hoisted(() => ({
 }))
 
 vi.mock('../../api', () => ({
-  createTask: mocks.createTask,
   downloadTaskFile: mocks.downloadTaskFile,
   getEnabledProviders: mocks.getEnabledProviders,
   listTasks: mocks.listTasks,
@@ -57,6 +56,13 @@ vi.mock('../../composables/useCreditCheck', () => ({
     checkCredits: mocks.checkCredits,
     triggerDialog: mocks.triggerDialog,
     closeDialog: mocks.closeDialog,
+  }),
+}))
+
+vi.mock('../../composables/useDirectTaskCreation', () => ({
+  useDirectTaskCreation: () => ({
+    createTask: mocks.directCreateTask,
+    isCreating: { value: false, __v_isRef: true },
   }),
 }))
 
@@ -173,7 +179,7 @@ describe('GeneratorView credit dialog integration', () => {
     mocks.checkCredits.mockReset()
     mocks.triggerDialog.mockReset()
     mocks.closeDialog.mockReset()
-    mocks.createTask.mockReset()
+    mocks.directCreateTask.mockReset()
     mocks.downloadTaskFile.mockReset()
     mocks.getEnabledProviders.mockReset()
     mocks.listTasks.mockReset()
@@ -302,7 +308,7 @@ describe('GeneratorView credit dialog integration', () => {
   })
 
   it('opens the credit dialog instead of showing a toast when text task creation returns INSUFFICIENT_CREDITS', async () => {
-    mocks.createTask.mockRejectedValue(createInsufficientCreditsError())
+    mocks.directCreateTask.mockRejectedValue(createInsufficientCreditsError())
 
     const wrapper = await mountView()
     await wrapper.get('textarea').setValue('cute dragon')
@@ -324,7 +330,7 @@ describe('GeneratorView credit dialog integration', () => {
       }
     }
 
-    mocks.createTask.mockRejectedValue(createInsufficientCreditsError())
+    mocks.directCreateTask.mockRejectedValue(createInsufficientCreditsError())
     globalThis.FileReader = FileReaderMock as unknown as typeof FileReader
 
     try {

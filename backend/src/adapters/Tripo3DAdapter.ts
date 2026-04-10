@@ -1,4 +1,5 @@
 import axios from 'axios';
+import FormData from 'form-data';
 import {
   IProviderAdapter,
   CreateTaskInput,
@@ -8,7 +9,21 @@ import {
 } from './IProviderAdapter';
 
 const TRIPO_API_BASE = 'https://api.tripo3d.ai/v2/openapi';
-const TRIPO_MODEL_VERSION = process.env.TRIPO_MODEL_VERSION || 'v2.0-20240919';
+const TRIPO_MODEL_VERSION = process.env.TRIPO_MODEL_VERSION || 'P1-20260311';
+const TRIPO_IMAGE_FILE_TYPE = 'image';
+
+function getUploadFilename(mimeType?: string): string {
+  switch (mimeType) {
+    case 'image/jpeg':
+      return 'upload.jpg';
+    case 'image/webp':
+      return 'upload.webp';
+    case 'image/png':
+      return 'upload.png';
+    default:
+      return 'upload-image';
+  }
+}
 
 export class Tripo3DAdapter implements IProviderAdapter {
   readonly providerId = 'tripo3d';
@@ -44,16 +59,27 @@ export class Tripo3DAdapter implements IProviderAdapter {
       requestBody = { type: 'text_to_model', model_version: TRIPO_MODEL_VERSION, prompt };
     } else {
       // image_to_model: upload image first to get a file token
+      const uploadFormData = new FormData();
+      uploadFormData.append('file', Buffer.from(imageBase64 ?? '', 'base64'), {
+        filename: getUploadFilename(mimeType),
+        contentType: mimeType,
+      });
       const uploadResp = await axios.post(
         `${TRIPO_API_BASE}/upload`,
-        { file: { type: mimeType, data: imageBase64 } },
-        { headers: { Authorization: `Bearer ${apiKey}` }, timeout: 30000 }
+        uploadFormData,
+        {
+          headers: {
+            Authorization: `Bearer ${apiKey}`,
+            ...uploadFormData.getHeaders(),
+          },
+          timeout: 30000,
+        }
       );
       const imageToken: string = uploadResp.data?.data?.image_token;
       requestBody = {
         type: 'image_to_model',
         model_version: TRIPO_MODEL_VERSION,
-        file: { type: mimeType, file_token: imageToken },
+        file: { type: TRIPO_IMAGE_FILE_TYPE, file_token: imageToken },
       };
     }
 
@@ -147,10 +173,22 @@ export class Tripo3DAdapter implements IProviderAdapter {
     });
 
     const data = resp.data?.data ?? resp.data;
-    const balance = data?.balance ?? data;
+    const balancePayload =
+      typeof data?.balance === 'object' && data?.balance !== null
+        ? data.balance
+        : data;
+    const available =
+      typeof data?.balance === 'number'
+        ? data.balance
+        : Number(balancePayload?.available ?? balancePayload?.balance ?? 0);
+    const frozen =
+      typeof data?.frozen === 'number'
+        ? data.frozen
+        : Number(balancePayload?.frozen ?? 0);
+
     return {
-      available: Number(balance?.available ?? balance?.balance ?? 0),
-      frozen: Number(balance?.frozen ?? 0),
+      available,
+      frozen,
     };
   }
 }

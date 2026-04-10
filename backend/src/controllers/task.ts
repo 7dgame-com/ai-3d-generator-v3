@@ -1,23 +1,81 @@
 import { Request, Response } from 'express';
 import { pool, query } from '../db/connection';
+import { creditToPower, getEstimatedCreditCost } from '../config/providers';
 import { decrypt } from '../services/crypto';
 import { addTaskToPoller } from '../services/taskPoller';
 import { AuthenticatedRequest } from '../middleware/auth';
 import { creditManager, computeThrottleDelay, sleep, DeductResult } from '../services/creditManager';
 import { providerRegistry } from '../adapters/ProviderRegistry';
-import { isDownloadExpired } from '../utils/urlExpiry';
-
-const ESTIMATED_CREDIT_COST: Record<string, number> = {
-  tripo3d: 30,
-  hyper3d: 1,
-};
+import { computeExpiresAt, isDownloadExpired } from '../utils/urlExpiry';
+import { normalizeTaskBilling } from '../utils/taskBilling';
 const DEFAULT_MAX_THROTTLE_DELAY_MS = 30000;
+const DIRECT_PROVIDER_STATUS_KEY_PREFIX = 'direct:';
+const LIST_VISIBLE_TASKS_PREDICATE = `
+status != 'success'
+OR expires_at > NOW()
+OR (
+  expires_at IS NULL
+  AND (
+    completed_at IS NULL
+    OR completed_at > DATE_SUB(NOW(), INTERVAL 24 HOUR)
+  )
+)`;
 
 interface AccountSnapshot {
   wallet_balance: string;
   pool_balance: string;
   pool_baseline: string;
   next_cycle_at: Date | null;
+}
+
+interface MissingExpiresAtRow {
+  task_id: string;
+  output_url: string | null;
+  thumbnail_url: string | null;
+  completed_at: string | Date | null;
+}
+
+function normalizePaginationInt(value: unknown, fallback: number): number {
+  const parsed = parseInt(String(value ?? ''), 10);
+  return Number.isFinite(parsed) ? parsed : fallback;
+}
+
+function serializeOptionalDate(value: unknown): string | null {
+  if (!value) {
+    return null;
+  }
+
+  const date = value instanceof Date ? value : new Date(String(value));
+  return Number.isNaN(date.getTime()) ? null : date.toISOString();
+}
+
+function toMysqlDateTime(date: Date): string {
+  return date.toISOString().slice(0, 19).replace('T', ' ');
+}
+
+async function backfillMissingExpiresAtForUser(userId: number): Promise<void> {
+  const rows = await query<MissingExpiresAtRow[]>(
+    `SELECT task_id, output_url, thumbnail_url, completed_at
+     FROM tasks
+     WHERE user_id = ?
+       AND status = 'success'
+       AND expires_at IS NULL
+       AND completed_at IS NOT NULL`,
+    [userId]
+  );
+
+  for (const row of rows) {
+    const completedAt = row.completed_at instanceof Date ? row.completed_at : new Date(String(row.completed_at));
+    if (Number.isNaN(completedAt.getTime())) {
+      continue;
+    }
+
+    const expiresAt = computeExpiresAt(row.output_url ?? null, row.thumbnail_url ?? null, completedAt);
+    await query(
+      'UPDATE tasks SET expires_at = ? WHERE task_id = ? AND user_id = ? AND expires_at IS NULL',
+      [toMysqlDateTime(expiresAt), row.task_id, userId]
+    );
+  }
 }
 
 async function getApiKey(providerId: string): Promise<string> {
@@ -41,16 +99,16 @@ async function getMaxThrottleDelayMs(): Promise<number> {
   return Number.isFinite(parsed) && parsed >= 0 ? parsed : DEFAULT_MAX_THROTTLE_DELAY_MS;
 }
 
-async function getLockedAccountSnapshot(userId: number, providerId: string): Promise<AccountSnapshot | null> {
+async function getLockedAccountSnapshot(userId: number): Promise<AccountSnapshot | null> {
   const conn = await pool.getConnection();
   try {
     await conn.beginTransaction();
     const [rows] = await conn.query<any[]>(
       `SELECT wallet_balance, pool_balance, pool_baseline, next_cycle_at
-       FROM user_accounts
-       WHERE user_id = ? AND provider_id = ?
+       FROM power_accounts
+       WHERE user_id = ?
        FOR UPDATE`,
-      [userId, providerId]
+      [userId]
     );
     await conn.commit();
     return rows?.[0] ?? null;
@@ -105,7 +163,7 @@ export async function createTask(req: Request, res: Response): Promise<void> {
   // Step 1: Lock account snapshot and evaluate throttle/available balance
   let accountSnapshot: AccountSnapshot | null;
   try {
-    accountSnapshot = await getLockedAccountSnapshot(userId, providerId);
+    accountSnapshot = await getLockedAccountSnapshot(userId);
   } catch (err) {
     console.error('[TaskController] 读取额度账户失败:', err);
     res.status(500).json({ code: 5001, message: '服务器内部错误' });
@@ -138,8 +196,9 @@ export async function createTask(req: Request, res: Response): Promise<void> {
 
   // Step 2: Pre-deduct credits BEFORE calling provider API
   let preDeductResult: DeductResult | null = null;
-  const estimatedCost = ESTIMATED_CREDIT_COST[providerId] ?? 30;
-  if (totalBalance < estimatedCost) {
+  const estimatedCreditCost = getEstimatedCreditCost(providerId);
+  const estimatedPower = creditToPower(providerId, estimatedCreditCost);
+  if (totalBalance < estimatedPower) {
     res.status(422).json({ code: 'INSUFFICIENT_CREDITS', message: '额度不足' });
     return;
   }
@@ -151,7 +210,7 @@ export async function createTask(req: Request, res: Response): Promise<void> {
   // Use a temp taskId for pre-deduction; will be updated after provider returns real task_id
   const tempTaskId = `temp:${userId}:${Date.now()}`;
   try {
-    preDeductResult = await creditManager.preDeduct(userId, providerId, estimatedCost, tempTaskId);
+    preDeductResult = await creditManager.preDeduct(userId, providerId, estimatedPower, tempTaskId);
     if (!preDeductResult.success) {
       if (preDeductResult.errorCode === 'INSUFFICIENT_CREDITS') {
         res.status(422).json({ code: 'INSUFFICIENT_CREDITS', message: '额度不足' });
@@ -223,15 +282,28 @@ export async function createTask(req: Request, res: Response): Promise<void> {
 
 export async function listTasks(req: Request, res: Response): Promise<void> {
   const userId = (req as AuthenticatedRequest).user.userId;
-  const page = Math.max(1, parseInt(String(req.query.page ?? '1'), 10));
-  const pageSize = Math.min(50, Math.max(1, parseInt(String(req.query.pageSize ?? '20'), 10)));
+  const page = Math.max(1, normalizePaginationInt(req.query.page, 1));
+  const pageSize = Math.min(50, Math.max(1, normalizePaginationInt(req.query.pageSize, 20)));
   const offset = (page - 1) * pageSize;
   try {
+    await backfillMissingExpiresAtForUser(userId);
+
     const rows = await query<Array<Record<string, unknown>>>(
-      'SELECT task_id, provider_id, type, prompt, status, progress, credit_cost, output_url, thumbnail_url, resource_id, error_message, created_at, completed_at FROM tasks WHERE user_id = ? ORDER BY created_at DESC LIMIT ? OFFSET ?',
+      `SELECT task_id, provider_id, provider_status_key, type, prompt, status, progress, credit_cost, power_cost, file_size, output_url, thumbnail_url, resource_id, error_message, created_at, completed_at, expires_at
+       FROM tasks
+       WHERE user_id = ?
+         AND (${LIST_VISIBLE_TASKS_PREDICATE})
+       ORDER BY created_at DESC
+       LIMIT ? OFFSET ?`,
       [userId, pageSize, offset]
     );
-    const countRows = await query<Array<{ total: number }>>('SELECT COUNT(*) AS total FROM tasks WHERE user_id = ?', [userId]);
+    const countRows = await query<Array<{ total: number }>>(
+      `SELECT COUNT(*) AS total
+       FROM tasks
+       WHERE user_id = ?
+         AND (${LIST_VISIBLE_TASKS_PREDICATE})`,
+      [userId]
+    );
     res.json({
       data: rows.map((row) => {
         const downloadExpired = row.status === 'success'
@@ -240,6 +312,12 @@ export async function listTasks(req: Request, res: Response): Promise<void> {
         const thumbnailExpired = row.status === 'success' && row.thumbnail_url
           ? isDownloadExpired(row.thumbnail_url as string | null, row.completed_at as string | null)
           : false;
+        const billing = normalizeTaskBilling({
+          providerId: String(row.provider_id),
+          creditCost: row.credit_cost,
+          powerCost: row.power_cost,
+          status: String(row.status),
+        });
         return {
           taskId: row.task_id,
           providerId: row.provider_id,
@@ -247,14 +325,18 @@ export async function listTasks(req: Request, res: Response): Promise<void> {
           prompt: row.prompt,
           status: row.status,
           progress: row.progress,
-          creditCost: row.credit_cost,
+          creditCost: billing.creditCost,
+          powerCost: billing.powerCost,
+          fileSize: row.file_size ? Number(row.file_size) : null,
           outputUrl: row.output_url,
           thumbnailUrl: row.thumbnail_url ?? null,
           thumbnailExpired,
+          directModeTask: typeof row.provider_status_key === 'string' && row.provider_status_key.startsWith(DIRECT_PROVIDER_STATUS_KEY_PREFIX),
           resourceId: row.resource_id,
           errorMessage: row.error_message,
           createdAt: row.created_at,
           completedAt: row.completed_at,
+          expiresAt: serializeOptionalDate(row.expires_at),
           downloadExpired,
         };
       }),
@@ -273,7 +355,7 @@ export async function getTask(req: Request, res: Response): Promise<void> {
   const { taskId } = req.params;
   try {
     const rows = await query<Array<Record<string, unknown>>>(
-      'SELECT task_id, provider_id, type, prompt, status, progress, credit_cost, output_url, thumbnail_url, resource_id, error_message, created_at, completed_at FROM tasks WHERE task_id = ? AND user_id = ? LIMIT 1',
+      'SELECT task_id, provider_id, provider_status_key, type, prompt, status, progress, credit_cost, power_cost, file_size, output_url, thumbnail_url, resource_id, error_message, created_at, completed_at, expires_at FROM tasks WHERE task_id = ? AND user_id = ? LIMIT 1',
       [taskId, userId]
     );
     if (!rows || rows.length === 0) { res.status(404).json({ code: 4004, message: '任务不存在' }); return; }
@@ -284,6 +366,12 @@ export async function getTask(req: Request, res: Response): Promise<void> {
     const thumbnailExpired = row.status === 'success' && row.thumbnail_url
       ? isDownloadExpired(row.thumbnail_url as string | null, row.completed_at as string | null)
       : false;
+    const billing = normalizeTaskBilling({
+      providerId: String(row.provider_id),
+      creditCost: row.credit_cost,
+      powerCost: row.power_cost,
+      status: String(row.status),
+    });
     res.json({
       taskId: row.task_id,
       providerId: row.provider_id,
@@ -291,15 +379,19 @@ export async function getTask(req: Request, res: Response): Promise<void> {
       prompt: row.prompt,
       status: row.status,
       progress: row.progress,
-      creditCost: row.credit_cost,
+      creditCost: billing.creditCost,
+      powerCost: billing.powerCost,
+      fileSize: row.file_size ? Number(row.file_size) : null,
       outputUrl: row.output_url,
       thumbnailUrl: row.thumbnail_url ?? null,
       thumbnailExpired,
+      directModeTask: typeof row.provider_status_key === 'string' && row.provider_status_key.startsWith(DIRECT_PROVIDER_STATUS_KEY_PREFIX),
       downloadExpired,
       resourceId: row.resource_id,
       errorMessage: row.error_message,
       createdAt: row.created_at,
       completedAt: row.completed_at,
+      expiresAt: serializeOptionalDate(row.expires_at),
     });
   } catch (err) {
     res.status(500).json({ code: 5001, message: '服务器内部错误' });

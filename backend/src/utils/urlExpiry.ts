@@ -50,6 +50,42 @@ export function parseUrlExpiry(url: string): number | null {
 }
 
 /**
+ * 根据 outputUrl 和 thumbnailUrl 计算最早过期时间。
+ * 若无法从 URL 中解析，则回退到 completedAt + 24 小时。
+ */
+export function computeExpiresAt(
+  outputUrl: string | null,
+  thumbnailUrl: string | null,
+  completedAt: Date
+): Date {
+  const baseTime = completedAt instanceof Date && !isNaN(completedAt.getTime())
+    ? completedAt.getTime()
+    : Date.now();
+  const fallback = new Date(baseTime + 24 * 60 * 60 * 1000);
+
+  const candidates: number[] = [];
+  if (outputUrl) {
+    const outputExpiry = parseUrlExpiry(outputUrl);
+    if (outputExpiry !== null) {
+      candidates.push(outputExpiry);
+    }
+  }
+
+  if (thumbnailUrl) {
+    const thumbnailExpiry = parseUrlExpiry(thumbnailUrl);
+    if (thumbnailExpiry !== null) {
+      candidates.push(thumbnailExpiry);
+    }
+  }
+
+  if (candidates.length === 0) {
+    return fallback;
+  }
+
+  return new Date(Math.min(...candidates));
+}
+
+/**
  * 解析 "日期 + 有效秒数" 格式的签名参数。
  * 日期格式: 20260408T023924Z（AWS S3 / 火山引擎 TOS 通用）
  */

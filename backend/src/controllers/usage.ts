@@ -8,6 +8,7 @@
 import { Response } from 'express';
 import { query } from '../db/connection';
 import { AuthenticatedRequest } from '../middleware/auth';
+import { normalizeTaskBilling } from '../utils/taskBilling';
 
 // ─── GET /backend/usage ──────────────────────────────────────────────────────
 
@@ -15,52 +16,71 @@ export async function getUsageSummary(req: AuthenticatedRequest, res: Response):
   const userId = req.user.userId;
 
   try {
-    // 总消耗 credits
-    const totalRows = await query<Array<{ total: number }>>(
-      "SELECT COALESCE(SUM(credit_cost), 0) AS total FROM tasks WHERE user_id = ? AND status = 'success'",
-      [userId]
-    );
-    const totalCredits = Number(totalRows[0]?.total ?? 0);
-
-    // 本月消耗 credits
-    const monthRows = await query<Array<{ month_total: number }>>(
-      `SELECT COALESCE(SUM(credit_cost), 0) AS month_total
+    const successRows = await query<
+      Array<{ provider_id: string; credit_cost: number; power_cost: number; created_at: string }>
+    >(
+      `SELECT provider_id, credit_cost, power_cost, created_at
        FROM tasks
        WHERE user_id = ?
-         AND status = 'success'
-         AND MONTH(created_at) = MONTH(CURDATE())
-         AND YEAR(created_at) = YEAR(CURDATE())`,
+         AND status = 'success'`,
       [userId]
     );
-    const monthCredits = Number(monthRows[0]?.month_total ?? 0);
 
-    // 任务总数
     const taskCountRows = await query<Array<{ task_count: number }>>(
       'SELECT COUNT(*) AS task_count FROM tasks WHERE user_id = ?',
       [userId]
     );
     const taskCount = Number(taskCountRows[0]?.task_count ?? 0);
+    const now = new Date();
+    const currentMonth = now.getUTCMonth();
+    const currentYear = now.getUTCFullYear();
+    const trendStartMs = now.getTime() - 30 * 24 * 60 * 60 * 1000;
 
-    // 最近 30 天按日期趋势
-    const trendRows = await query<Array<{ date: string; credits: number }>>(
-      `SELECT DATE(created_at) AS date, SUM(credit_cost) AS credits
-       FROM tasks
-       WHERE user_id = ?
-         AND status = 'success'
-         AND created_at >= DATE_SUB(CURDATE(), INTERVAL 30 DAY)
-       GROUP BY DATE(created_at)
-       ORDER BY date ASC`,
-      [userId]
-    );
+    let totalCredits = 0;
+    let totalPower = 0;
+    let monthCredits = 0;
+    let monthPower = 0;
+    const dailyTrendMap = new Map<string, { credits: number; power: number }>();
+
+    for (const row of successRows) {
+      const billing = normalizeTaskBilling({
+        providerId: row.provider_id,
+        creditCost: row.credit_cost,
+        powerCost: row.power_cost,
+        status: 'success',
+      });
+      const createdAt = new Date(row.created_at);
+
+      totalCredits += billing.creditCost;
+      totalPower += billing.powerCost;
+
+      if (createdAt.getUTCFullYear() === currentYear && createdAt.getUTCMonth() === currentMonth) {
+        monthCredits += billing.creditCost;
+        monthPower += billing.powerCost;
+      }
+
+      if (createdAt.getTime() >= trendStartMs) {
+        const dateKey = createdAt.toISOString().slice(0, 10);
+        const current = dailyTrendMap.get(dateKey) ?? { credits: 0, power: 0 };
+        current.credits += billing.creditCost;
+        current.power += billing.powerCost;
+        dailyTrendMap.set(dateKey, current);
+      }
+    }
 
     res.json({
-      totalCredits,
-      monthCredits,
+      totalCredits: Math.round(totalCredits * 100) / 100,
+      totalPower: Math.round(totalPower * 100) / 100,
+      monthCredits: Math.round(monthCredits * 100) / 100,
+      monthPower: Math.round(monthPower * 100) / 100,
       taskCount,
-      dailyTrend: trendRows.map((r) => ({
-        date: r.date,
-        credits: Number(r.credits),
-      })),
+      dailyTrend: Array.from(dailyTrendMap.entries())
+        .sort(([left], [right]) => left.localeCompare(right))
+        .map(([date, values]) => ({
+          date,
+          credits: Math.round(values.credits * 100) / 100,
+          power: Math.round(values.power * 100) / 100,
+        })),
     });
   } catch (err) {
     console.error('[UsageController] GET /usage error:', err);
@@ -102,18 +122,22 @@ export async function getUsageHistory(req: AuthenticatedRequest, res: Response):
     const rows = await query<
       Array<{
         task_id: string;
+        provider_id: string;
         type: string;
         prompt: string | null;
         credit_cost: number;
+        power_cost: number;
         created_at: string;
         status: string;
       }>
     >(
       `SELECT
          task_id,
+         provider_id,
          type,
          prompt,
          credit_cost,
+         power_cost,
          created_at,
          status
        FROM tasks
@@ -123,14 +147,23 @@ export async function getUsageHistory(req: AuthenticatedRequest, res: Response):
     );
 
     res.json({
-      data: rows.map((r) => ({
+      data: rows.map((r) => {
+        const billing = normalizeTaskBilling({
+          providerId: r.provider_id,
+          creditCost: r.credit_cost,
+          powerCost: r.power_cost,
+          status: r.status,
+        });
+        return {
         taskId: r.task_id,
         type: r.type,
         prompt: r.prompt ? r.prompt.slice(0, 50) : null,
-        creditsUsed: Number(r.credit_cost),
+        creditsUsed: billing.creditCost,
+        powerUsed: billing.powerCost,
         createdAt: r.created_at,
         status: r.status,
-      })),
+        };
+      }),
     });
   } catch (err) {
     console.error('[UsageController] GET /usage/history error:', err);

@@ -11,9 +11,13 @@ jest.mock('../db/connection', () => ({
   },
 }));
 
-jest.mock('../utils/urlExpiry', () => ({
-  isDownloadExpired: (...args: unknown[]) => mockIsDownloadExpired(...args),
-}));
+jest.mock('../utils/urlExpiry', () => {
+  const actual = jest.requireActual('../utils/urlExpiry');
+  return {
+    ...actual,
+    isDownloadExpired: (...args: unknown[]) => mockIsDownloadExpired(...args),
+  };
+});
 
 function createResponse() {
   const payload: { body?: unknown } = {};
@@ -35,20 +39,26 @@ describe('task thumbnail API fields', () => {
 
   it('returns thumbnailUrl and thumbnailExpired from GET /tasks', async () => {
     mockQuery
+      .mockResolvedValueOnce([])
       .mockResolvedValueOnce([
         {
           task_id: 'task-001',
+          provider_id: 'tripo3d',
+          provider_status_key: null,
           type: 'text_to_model',
           prompt: 'chair',
           status: 'success',
           progress: 100,
           credit_cost: 30,
+          power_cost: 1.43,
+          file_size: null,
           output_url: 'https://cdn.example.com/model.glb',
           thumbnail_url: 'https://cdn.example.com/preview.webp',
           resource_id: null,
           error_message: null,
           created_at: '2026-04-08T00:00:00.000Z',
           completed_at: '2026-04-08T00:01:00.000Z',
+          expires_at: '2026-04-10T00:01:00.000Z',
         },
       ])
       .mockResolvedValueOnce([{ total: 1 }]);
@@ -85,17 +95,22 @@ describe('task thumbnail API fields', () => {
     mockQuery.mockResolvedValueOnce([
       {
         task_id: 'task-002',
+        provider_id: 'tripo3d',
+        provider_status_key: null,
         type: 'text_to_model',
         prompt: 'lamp',
         status: 'success',
         progress: 100,
         credit_cost: 30,
+        power_cost: 1.43,
+        file_size: null,
         output_url: 'https://cdn.example.com/model.glb',
         thumbnail_url: 'https://cdn.example.com/preview.webp',
         resource_id: null,
         error_message: null,
         created_at: '2026-04-08T00:00:00.000Z',
         completed_at: '2026-04-08T00:01:00.000Z',
+        expires_at: '2026-04-10T00:01:00.000Z',
       },
     ]);
     mockIsDownloadExpired.mockReturnValueOnce(false).mockReturnValueOnce(false);

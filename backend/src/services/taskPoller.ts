@@ -1,17 +1,14 @@
 import { query } from '../db/connection';
+import { creditToPower, getEstimatedCreditCost } from '../config/providers';
 import { decrypt } from './crypto';
 import { creditManager } from './creditManager';
 import { providerRegistry } from '../adapters/ProviderRegistry';
+import { computeExpiresAt } from '../utils/urlExpiry';
 
 const POLL_INTERVAL_MS = 3000;
 const TIMEOUT_MS = 10 * 60 * 1000;
 const MAX_CONSECUTIVE_FAILURES = 3;
-
-/** Fallback credit cost per provider when the API doesn't return one */
-const PROVIDER_DEFAULT_COST: Record<string, number> = {
-  tripo3d: 30,
-  hyper3d: 0.5,
-};
+const DIRECT_PROVIDER_STATUS_KEY_PREFIX = 'direct:';
 
 const activePollers = new Set<string>();
 
@@ -48,14 +45,27 @@ interface TaskContext {
   user_id: number;
   provider_id: string;
   provider_status_key: string | null;
+  status: string;
 }
 
 async function getTaskContext(taskId: string): Promise<TaskContext | null> {
   const rows = await query<TaskContext[]>(
-    'SELECT user_id, provider_id, provider_status_key FROM tasks WHERE task_id = ? LIMIT 1',
+    'SELECT user_id, provider_id, provider_status_key, status FROM tasks WHERE task_id = ? LIMIT 1',
     [taskId]
   );
   return rows?.[0] ?? null;
+}
+
+function normalizeProviderStatusKey(providerStatusKey: string | null, taskId: string): string {
+  if (!providerStatusKey || providerStatusKey.length === 0) {
+    return taskId;
+  }
+
+  if (providerStatusKey.startsWith(DIRECT_PROVIDER_STATUS_KEY_PREFIX)) {
+    return providerStatusKey.slice(DIRECT_PROVIDER_STATUS_KEY_PREFIX.length) || taskId;
+  }
+
+  return providerStatusKey;
 }
 
 async function markTaskFailed(taskId: string, errorMessage: string): Promise<void> {
@@ -105,11 +115,28 @@ async function handleSuccess(
   thumbnailUrl?: string
 ): Promise<void> {
   lastProgress.delete(taskId);
+  const powerCost = creditToPower(providerId, creditCost);
+  const completedAt = new Date();
+
+  // Try to get file size via HEAD request
+  let fileSize: number | null = null;
+  try {
+    const headResp = await fetch(outputUrl, { method: 'HEAD', signal: AbortSignal.timeout(10000) });
+    const cl = headResp.headers.get('content-length');
+    if (cl) fileSize = parseInt(cl, 10) || null;
+  } catch {
+    // Non-critical, skip
+  }
+  if (fileSize) {
+    await query('UPDATE tasks SET file_size = ? WHERE task_id = ?', [fileSize, taskId]);
+  }
+
   const result = await creditManager.finalizeTaskSuccess(
     userId,
     providerId,
     taskId,
     outputUrl,
+    powerCost,
     creditCost,
     thumbnailUrl
   );
@@ -118,6 +145,12 @@ async function handleSuccess(
       `[TaskPoller] task ${taskId} completed with undercharged billing: ${result.billingMessage ?? 'unknown'}`
     );
   }
+
+  const expiresAt = computeExpiresAt(outputUrl, thumbnailUrl ?? null, completedAt);
+  await query('UPDATE tasks SET expires_at = ? WHERE task_id = ?', [
+    expiresAt.toISOString().slice(0, 19).replace('T', ' '),
+    taskId,
+  ]);
 }
 
 function retryTaskSuccessFinalization(
@@ -158,7 +191,14 @@ async function pollTask(taskId: string, startTime: number, failureCount: number)
     return;
   }
 
+  if (taskContext.status === 'success' || taskContext.status === 'failed' || taskContext.status === 'timeout') {
+    lastProgress.delete(taskId);
+    activePollers.delete(taskId);
+    return;
+  }
+
   const { user_id: userId, provider_id: providerId, provider_status_key: providerStatusKey } = taskContext;
+  const effectiveStatusKey = normalizeProviderStatusKey(providerStatusKey, taskId);
   const adapter = providerRegistry.get(providerId);
   if (!adapter) {
     activePollers.delete(taskId);
@@ -181,7 +221,7 @@ async function pollTask(taskId: string, startTime: number, failureCount: number)
   }
 
   try {
-    const status = await adapter.getTaskStatus(apiKey, taskId, providerStatusKey ?? undefined);
+    const status = await adapter.getTaskStatus(apiKey, taskId, effectiveStatusKey);
 
     if (status.status === 'success') {
       if (!status.outputUrl || status.outputUrl.trim().length === 0) {
@@ -189,7 +229,7 @@ async function pollTask(taskId: string, startTime: number, failureCount: number)
         setTimeout(() => pollTask(taskId, startTime, 0), POLL_INTERVAL_MS);
         return;
       }
-      const actualCost = status.creditCost ?? PROVIDER_DEFAULT_COST[providerId] ?? 0;
+      const actualCost = status.creditCost ?? getEstimatedCreditCost(providerId);
       try {
         await handleSuccess(
           taskId,
@@ -238,7 +278,7 @@ async function pollTask(taskId: string, startTime: number, failureCount: number)
   }
 }
 
-export function addTaskToPoller(taskId: string): void {
+function addTaskToPollerInternal(taskId: string): void {
   if (activePollers.has(taskId)) {
     return;
   }
@@ -246,13 +286,18 @@ export function addTaskToPoller(taskId: string): void {
   setTimeout(() => pollTask(taskId, Date.now(), 0), POLL_INTERVAL_MS);
 }
 
+export function addTaskToPoller(taskId: string): void {
+  addTaskToPollerInternal(taskId);
+}
+
 export async function startPoller(): Promise<void> {
   try {
     const pendingTasks = await query<Array<{ task_id: string }>>(
       "SELECT task_id FROM tasks WHERE status IN ('queued', 'processing')"
     );
+
     for (const { task_id } of pendingTasks ?? []) {
-      addTaskToPoller(task_id);
+      addTaskToPollerInternal(task_id);
     }
   } catch (error) {
     console.error('[TaskPoller] failed to start:', (error as Error).message);

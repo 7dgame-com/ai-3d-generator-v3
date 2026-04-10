@@ -7,6 +7,7 @@ declare module 'vue-router' {
     public?: boolean
     title?: string
     requiresPermission?: PermissionAction
+    requiresRoot?: boolean
   }
 }
 
@@ -45,7 +46,7 @@ const router = createRouter({
           path: 'admin',
           name: 'Admin',
           component: () => import('../views/AdminView.vue'),
-          meta: { title: 'Admin', requiresPermission: 'admin-config' },
+          meta: { title: 'Admin', requiresPermission: 'admin-config', requiresRoot: true },
         },
       ],
     },
@@ -57,13 +58,16 @@ router.beforeEach(async (to) => {
     return '/not-in-iframe'
   }
 
-  if (!to.meta.requiresPermission) {
+  if (!to.meta.requiresPermission && !to.meta.requiresRoot) {
     return true
   }
 
-  const { fetchAllowedActions, can } = usePermissions()
+  const { fetchAllowedActions, can, isRootUser } = usePermissions()
   await fetchAllowedActions()
-  if (!can(to.meta.requiresPermission)) {
+  if (to.meta.requiresPermission && !can(to.meta.requiresPermission)) {
+    return '/no-permission'
+  }
+  if (to.meta.requiresRoot && !isRootUser.value) {
     return '/no-permission'
   }
   return true

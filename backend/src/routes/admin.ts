@@ -9,10 +9,11 @@
 import { Router } from 'express';
 import { auth } from '../middleware/auth';
 import { requirePermission } from '../middleware/permission';
+import { requireRootUser } from '../middleware/rootOnly';
 import { adminRouter } from '../controllers/admin';
 
 const router = Router();
 
-router.use('/admin', auth, requirePermission('admin-config'), adminRouter);
+router.use('/admin', auth, requirePermission('admin-config'), requireRootUser, adminRouter);
 
 export default router;

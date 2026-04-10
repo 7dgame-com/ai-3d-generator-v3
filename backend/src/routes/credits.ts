@@ -9,12 +9,25 @@
 import { Router, RequestHandler } from 'express';
 import { auth } from '../middleware/auth';
 import { requirePermission } from '../middleware/permission';
+import { requireRootUser } from '../middleware/rootOnly';
 import { getStatusHandler, getAdminStatusHandler, rechargeHandler } from '../controllers/credits';
 
 const router = Router();
 
-router.post('/admin/recharge', auth, requirePermission('admin-config'), rechargeHandler as unknown as RequestHandler);
+router.post(
+  '/admin/recharge',
+  auth,
+  requirePermission('admin-config'),
+  requireRootUser,
+  rechargeHandler as unknown as RequestHandler
+);
 router.get('/credits/status', auth, getStatusHandler as unknown as RequestHandler);
-router.get('/admin/credits/:userId', auth, requirePermission('admin-config'), getAdminStatusHandler as unknown as RequestHandler);
+router.get(
+  '/admin/credits/:userId',
+  auth,
+  requirePermission('admin-config'),
+  requireRootUser,
+  getAdminStatusHandler as unknown as RequestHandler
+);
 
 export default router;

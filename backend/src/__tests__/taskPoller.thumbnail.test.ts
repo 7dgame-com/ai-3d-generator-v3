@@ -1,7 +1,12 @@
+import { creditToPower } from '../config/providers';
+
 const mockQuery = jest.fn();
 const mockDecrypt = jest.fn();
 const mockFinalizeTaskSuccess = jest.fn();
 const mockGetTaskStatus = jest.fn();
+const mockFetch = jest.fn();
+const mockComputeExpiresAt = jest.fn();
+const originalFetch = global.fetch;
 
 jest.mock('../db/connection', () => ({
   query: (...args: unknown[]) => mockQuery(...args),
@@ -26,11 +31,19 @@ jest.mock('../adapters/ProviderRegistry', () => ({
   },
 }));
 
+jest.mock('../utils/urlExpiry', () => ({
+  computeExpiresAt: (...args: unknown[]) => mockComputeExpiresAt(...args),
+}));
+
 describe('task poller thumbnail persistence', () => {
   beforeEach(() => {
     jest.resetModules();
     jest.clearAllMocks();
     jest.useFakeTimers();
+    global.fetch = mockFetch as unknown as typeof fetch;
+    mockFetch.mockResolvedValue({
+      headers: { get: () => null },
+    });
     mockDecrypt.mockReturnValue('real-api-key');
     mockQuery
       .mockResolvedValueOnce([
@@ -53,10 +66,12 @@ describe('task poller thumbnail persistence', () => {
       billingMessage: null,
       shortfallAmount: 0,
     });
+    mockComputeExpiresAt.mockReturnValue(new Date('2026-04-10T10:00:00.000Z'));
   });
 
   afterEach(() => {
     jest.useRealTimers();
+    global.fetch = originalFetch;
   });
 
   it('passes thumbnailUrl through when finalizing a successful task', async () => {
@@ -70,8 +85,18 @@ describe('task poller thumbnail persistence', () => {
       'tripo3d',
       'task-003',
       'https://cdn.example.com/model.glb',
+      creditToPower('tripo3d', 30),
       30,
       'https://cdn.example.com/preview.webp'
+    );
+    expect(mockComputeExpiresAt).toHaveBeenCalledWith(
+      'https://cdn.example.com/model.glb',
+      'https://cdn.example.com/preview.webp',
+      expect.any(Date)
+    );
+    expect(mockQuery).toHaveBeenCalledWith(
+      'UPDATE tasks SET expires_at = ? WHERE task_id = ?',
+      ['2026-04-10 10:00:00', 'task-003']
     );
   });
 });

@@ -93,6 +93,29 @@ function pluginManifestPlugin() {
   }
 }
 
+const proxyConfig = {
+  '/api/': {
+    target: 'http://localhost:8081',
+    changeOrigin: true,
+    rewrite: (path: string) => path.replace(/^\/api/, '')
+  },
+  '/backend/': {
+    target: 'http://localhost:8089',
+    changeOrigin: true,
+    rewrite: (path: string) => path.replace(/^\/backend/, '')
+  },
+  '/tripo/': {
+    target: 'https://api.tripo3d.ai',
+    changeOrigin: true,
+    rewrite: (path: string) => path.replace(/^\/tripo/, '/v2/openapi')
+  },
+  '/hyper/': {
+    target: 'https://api.hyper3d.com',
+    changeOrigin: true,
+    rewrite: (path: string) => path.replace(/^\/hyper/, '/api/v2')
+  }
+}
+
 export default defineConfig({
   plugins: [vue(), pluginManifestPlugin()],
   define: {
@@ -100,17 +123,10 @@ export default defineConfig({
   },
   server: {
     port: 3008,
-    proxy: {
-      '/api/': {
-        target: 'http://localhost:8081',
-        changeOrigin: true,
-        rewrite: (path: string) => path.replace(/^\/api/, '')
-      },
-      '/backend/': {
-        target: 'http://localhost:8089',
-        changeOrigin: true,
-      }
-    }
+    proxy: proxyConfig
+  },
+  preview: {
+    proxy: proxyConfig
   },
   test: {
     environment: 'jsdom',

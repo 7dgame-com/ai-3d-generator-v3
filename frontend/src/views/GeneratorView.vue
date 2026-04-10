@@ -18,7 +18,38 @@
           </div>
         </el-tab-pane>
         <el-tab-pane :label="t('generator.imageTab')" name="image">
-          <input type="file" accept="image/png,image/jpeg,image/webp" @change="handleImageChange" />
+          <div
+            data-test="image-dropzone"
+            class="image-upload-area"
+            :class="{ 'drag-active': isImageDragActive }"
+            @dragenter.prevent="handleImageDragEnter"
+            @dragover.prevent="handleImageDragOver"
+            @dragleave.prevent="handleImageDragLeave"
+            @drop.prevent="handleImageDrop"
+          >
+            <input
+              ref="fileInputRef"
+              type="file"
+              accept="image/png,image/jpeg,image/webp"
+              class="file-input-hidden"
+              @change="handleImageChange"
+            />
+            <div
+              v-if="imagePreviewUrl"
+              data-test="image-preview"
+              class="image-preview"
+              @click="openImagePicker"
+            >
+              <img :src="imagePreviewUrl" alt="preview" class="preview-img" data-test="image-preview-img" />
+              <div class="preview-overlay">
+                <span>{{ t('generator.changeImage') }}</span>
+              </div>
+            </div>
+            <div v-else class="image-placeholder" @click="openImagePicker">
+              <el-icon :size="48"><UploadFilled /></el-icon>
+              <span>{{ t('generator.selectImage') }}</span>
+            </div>
+          </div>
           <div class="actions">
             <el-button type="primary" :disabled="!can('generate-model') || !imageBase64" :loading="submitting" @click="submitImage">
               {{ t('generator.submit') }}
@@ -66,14 +97,24 @@
                 <el-tag v-if="task.providerId" size="small" type="info">
                   {{ providerLabel(task.providerId) }}
                 </el-tag>
-                <span v-if="task.creditCost > 0" class="meta-item">
-                  {{ t('generator.credits', { n: task.creditCost }) }}
+                <span v-if="displayPower(task.powerCost, task.creditCost, task.providerId) > 0" class="meta-item">
+                  {{ t('generator.power', { n: displayPower(task.powerCost, task.creditCost, task.providerId) }) }}
+                </span>
+                <span v-if="task.fileSize" class="meta-item">
+                  {{ formatFileSize(task.fileSize) }}
                 </span>
                 <span v-if="task.createdAt" class="meta-item">
                   {{ formatDateTime(task.createdAt) }}
                 </span>
                 <span v-if="task.createdAt && task.completedAt" class="meta-item">
                   {{ formatTaskDuration(task.createdAt, task.completedAt) }}
+                </span>
+                <span
+                  v-if="getTaskExpiry(task)"
+                  class="meta-item"
+                  :class="{ 'expiry-urgent': getTaskExpiry(task)?.urgent }"
+                >
+                  {{ getTaskExpiry(task)?.text }}
                 </span>
               </div>
               <el-progress v-if="task.status === 'processing'" :percentage="task.progress" />
@@ -89,12 +130,27 @@
                   {{ t('generator.upload') }}
                 </el-button>
                 <el-tag v-if="task.downloadExpired" type="info" size="small">{{ t('generator.expired') }}</el-tag>
-                <span v-if="task.resourceId">Resource #{{ task.resourceId }}</span>
+                <el-button
+                  v-if="task.resourceId"
+                  :data-test="`task-resource-${task.taskId}`"
+                  size="small"
+                  @click="openMainResource(task.resourceId)"
+                >
+                  {{ t('generator.view') }}
+                </el-button>
               </div>
             </div>
           </div>
         </article>
       </div>
+      <el-pagination
+        v-if="total > pageSize"
+        v-model:current-page="currentPage"
+        :page-size="pageSize"
+        :total="total"
+        layout="prev, pager, next"
+        @current-change="handlePageChange"
+      />
     </section>
   </div>
 
@@ -109,40 +165,64 @@
 <script setup lang="ts">
 import { onBeforeUnmount, onMounted, ref } from 'vue'
 import { ElMessage } from 'element-plus'
-import { createTask, downloadTaskFile, fetchThumbnailBlob, getEnabledProviders, listTasks, type Task } from '../api'
+import { UploadFilled } from '@element-plus/icons-vue'
+import { downloadTaskFile, fetchThumbnailBlob, getEnabledProviders, listTasks, type Task } from '../api'
+import type { TaskStatusOutput } from '../adapters/IFrontendProviderAdapter'
 import CreditDialog from '../components/CreditDialog.vue'
 import { useCreditCheck } from '../composables/useCreditCheck'
+import { useDirectTaskCreation } from '../composables/useDirectTaskCreation'
 import { usePermissions } from '../composables/usePermissions'
 import { useTaskPoller } from '../composables/useTaskPoller'
 import { useUploadService } from '../composables/useUploadService'
 import { useI18n } from 'vue-i18n'
 import type { AxiosError } from 'axios'
 import { useRouter } from 'vue-router'
-import { formatDuration, formatDateTime as formatDateTimeUtil, providerLabel } from './generatorTaskMeta'
+import { useTheme } from '../composables/useTheme'
+import { getProviderDefaultCreditCost } from '../utils/providerBilling'
+import {
+  formatDuration,
+  formatDateTime as formatDateTimeUtil,
+  formatExpiryCountdown,
+  providerLabel,
+  displayPower,
+  formatFileSize,
+} from './generatorTaskMeta'
 
 const { t, locale } = useI18n()
 const router = useRouter()
+const { themeName } = useTheme()
 const { can, fetchAllowedActions } = usePermissions()
 const { showCreditDialog, isAdmin, checkCredits, triggerDialog, closeDialog } = useCreditCheck()
+const { createTask: createDirectTask } = useDirectTaskCreation()
 const { startPolling, stopAllPolling } = useTaskPoller()
 const { uploadToMain } = useUploadService()
 
 const mode = ref<'text' | 'image'>('text')
 const prompt = ref('')
+const fileInputRef = ref<HTMLInputElement | null>(null)
 const imageBase64 = ref<string | null>(null)
-const imageMimeType = ref<string>('image/png')
+const imageFile = ref<File | null>(null)
+const imagePreviewUrl = ref<string | null>(null)
+const isImageDragActive = ref(false)
 const submitting = ref(false)
 const providers = ref<string[]>([])
 const selectedProvider = ref('tripo3d')
 const tasks = ref<Task[]>([])
+const currentPage = ref(1)
+const pageSize = ref(20)
+const total = ref(0)
+const countdownNowMs = ref(Date.now())
 const uploadingTaskId = ref<string | null>(null)
 const brokenThumbnailTaskIds = ref<Record<string, boolean>>({})
 const thumbnailBlobUrls = ref<Record<string, string>>({})
+const acceptedImageMimeTypes = new Set(['image/png', 'image/jpeg', 'image/webp'])
+let imageDragDepth = 0
 
 // ── 平滑进度插值 ──
 const smoothProgress = ref<Record<string, number>>({})
 const targetProgressMap = new Map<string, number>()
 let tweenTimer: number | null = null
+let countdownTimer: number | null = null
 const TWEEN_MS = 200
 const CREEP = 0.5   // 没有新目标时每 tick 缓慢前进
 const MAX_SMOOTH = 95
@@ -197,6 +277,10 @@ function getDisplayProgress(taskId: string, serverProgress: number): number {
 onBeforeUnmount(() => {
   stopAllPolling()
   if (tweenTimer !== null) { window.clearInterval(tweenTimer); tweenTimer = null }
+  if (countdownTimer !== null) { window.clearInterval(countdownTimer); countdownTimer = null }
+  if (imagePreviewUrl.value) {
+    URL.revokeObjectURL(imagePreviewUrl.value)
+  }
   // 释放所有 blob URL
   Object.values(thumbnailBlobUrls.value).forEach((url) => URL.revokeObjectURL(url))
 })
@@ -220,6 +304,9 @@ onMounted(async () => {
   await loadProviders()
   await loadTasks()
   await checkCredits()
+  countdownTimer = window.setInterval(() => {
+    countdownNowMs.value = Date.now()
+  }, 60 * 1000)
 })
 
 async function loadProviders() {
@@ -230,14 +317,21 @@ async function loadProviders() {
   }
 }
 
-async function loadTasks() {
-  const response = await listTasks()
+async function loadTasks(page = currentPage.value) {
+  const response = await listTasks({ page, pageSize: pageSize.value })
+  currentPage.value = response.data.page ?? page
+  pageSize.value = response.data.pageSize ?? pageSize.value
+  total.value = response.data.total ?? 0
   tasks.value = (response.data.data ?? []).map((task) => normalizeTask(task))
   tasks.value.forEach((task) => {
     if (task.status === 'queued' || task.status === 'processing') {
       startPolling(task.taskId, updateTask)
     }
   })
+}
+
+function handlePageChange(page: number) {
+  void loadTasks(page)
 }
 
 function updateTask(task: Task) {
@@ -263,6 +357,29 @@ function updateTask(task: Task) {
   }
 }
 
+function updateDirectTaskStatus(taskId: string, status: TaskStatusOutput) {
+  const index = tasks.value.findIndex((item) => item.taskId === taskId)
+  if (index < 0) {
+    return
+  }
+
+  const currentTask = tasks.value[index]
+  if (status.status === 'queued' || status.status === 'processing') {
+    setProgressTarget(taskId, status.progress ?? currentTask.progress ?? 0)
+  } else {
+    clearProgressTarget(taskId)
+  }
+
+  tasks.value[index] = normalizeTask({
+    ...currentTask,
+    status: status.status,
+    progress: status.progress ?? currentTask.progress,
+    outputUrl: status.outputUrl ?? currentTask.outputUrl,
+    thumbnailUrl: status.thumbnailUrl ?? currentTask.thumbnailUrl,
+    errorMessage: status.errorMessage ?? currentTask.errorMessage,
+  })
+}
+
 function normalizeTask(task: Task): Task {
   if (brokenThumbnailTaskIds.value[task.taskId]) {
     const nextBroken = { ...brokenThumbnailTaskIds.value }
@@ -270,8 +387,17 @@ function normalizeTask(task: Task): Task {
     brokenThumbnailTaskIds.value = nextBroken
   }
 
+  const creditCost = Number(task.creditCost ?? 0)
+  const powerCost = Number(task.powerCost ?? 0)
+  const fallbackCreditCost =
+    task.status === 'success' && creditCost <= 0 && powerCost <= 0
+      ? getProviderDefaultCreditCost(task.providerId)
+      : creditCost
+
   const normalized = {
     ...task,
+    creditCost: fallbackCreditCost,
+    powerCost,
     thumbnailUrl: task.thumbnailUrl ?? null,
     thumbnailExpired: task.thumbnailExpired ?? false,
   }
@@ -318,37 +444,148 @@ function formatDateTime(isoString: string): string {
   return formatDateTimeUtil(isoString, String(locale.value))
 }
 
+function getTaskExpiry(task: Task) {
+  if (task.status !== 'success') {
+    return null
+  }
+
+  return formatExpiryCountdown(task.expiresAt, countdownNowMs.value)
+}
+
 function goToAdmin() {
   router.push('/admin')
   closeDialog()
 }
 
+function openImagePicker() {
+  fileInputRef.value?.click()
+}
+
+function resetImageDragState() {
+  imageDragDepth = 0
+  isImageDragActive.value = false
+}
+
+function isFileDragEvent(event: DragEvent): boolean {
+  return Array.from(event.dataTransfer?.types ?? []).includes('Files')
+}
+
+function applyImageFile(file: File) {
+  if (!acceptedImageMimeTypes.has(file.type)) {
+    return
+  }
+
+  imageFile.value = file
+  if (imagePreviewUrl.value) {
+    URL.revokeObjectURL(imagePreviewUrl.value)
+  }
+  imagePreviewUrl.value = URL.createObjectURL(file)
+
+  const reader = new FileReader()
+  reader.onload = () => {
+    const result = String(reader.result || '')
+    imageBase64.value = result.split(',')[1] || null
+  }
+  reader.readAsDataURL(file)
+
+  if (fileInputRef.value) {
+    fileInputRef.value.value = ''
+  }
+}
+
+function handleImageDragEnter(event: DragEvent) {
+  if (!isFileDragEvent(event)) {
+    return
+  }
+  imageDragDepth += 1
+  isImageDragActive.value = true
+}
+
+function handleImageDragOver(event: DragEvent) {
+  if (!isFileDragEvent(event)) {
+    return
+  }
+  if (event.dataTransfer) {
+    event.dataTransfer.dropEffect = 'copy'
+  }
+  isImageDragActive.value = true
+}
+
+function handleImageDragLeave(event: DragEvent) {
+  if (!isFileDragEvent(event)) {
+    return
+  }
+  imageDragDepth = Math.max(0, imageDragDepth - 1)
+  if (imageDragDepth === 0) {
+    isImageDragActive.value = false
+  }
+}
+
+function handleImageDrop(event: DragEvent) {
+  const file = event.dataTransfer?.files?.[0]
+  resetImageDragState()
+  if (!file) {
+    return
+  }
+  applyImageFile(file)
+}
+
 async function submitText() {
   submitting.value = true
+  const taskPrompt = prompt.value
+  let createdTaskId = ''
   try {
-    const response = await createTask({
+    const response = await createDirectTask({
       type: 'text_to_model',
-      prompt: prompt.value,
-      provider_id: selectedProvider.value,
+      prompt: taskPrompt,
+      providerId: selectedProvider.value,
+      onUpdate: (status) => {
+        if (createdTaskId) {
+          updateDirectTaskStatus(createdTaskId, status)
+        }
+      },
+      onComplete: () => {
+        if (createdTaskId) {
+          clearProgressTarget(createdTaskId)
+        }
+        void loadTasks()
+      },
+      onFail: (errorMessage) => {
+        if (createdTaskId) {
+          updateDirectTaskStatus(createdTaskId, {
+            status: 'failed',
+            progress: 100,
+            errorMessage,
+          })
+        }
+        void loadTasks()
+      },
     })
+    createdTaskId = response.taskId
+
     tasks.value.unshift({
-      taskId: response.data.taskId,
+      taskId: createdTaskId,
       providerId: selectedProvider.value,
       type: 'text_to_model',
-      prompt: prompt.value,
-      status: response.data.status,
+      prompt: taskPrompt,
+      status: 'queued',
       progress: 0,
       creditCost: 0,
+      powerCost: 0,
       outputUrl: null,
       thumbnailUrl: null,
       thumbnailExpired: false,
+      directModeTask: response.mode === 'direct',
       resourceId: null,
       errorMessage: null,
       createdAt: new Date().toISOString(),
       completedAt: null,
+      expiresAt: null,
       downloadExpired: false,
     })
-    startPolling(response.data.taskId, updateTask)
+    if (response.mode === 'proxy') {
+      startPolling(createdTaskId, updateTask)
+    }
     prompt.value = ''
   } catch (error) {
     if (isInsufficientCreditsError(error)) {
@@ -362,34 +599,65 @@ async function submitText() {
 }
 
 async function submitImage() {
-  if (!imageBase64.value) return
+  if (!imageFile.value) return
   submitting.value = true
+  const sourceImageFile = imageFile.value
+  let createdTaskId = ''
   try {
-    const response = await createTask({
+    const response = await createDirectTask({
       type: 'image_to_model',
-      imageBase64: imageBase64.value,
-      mimeType: imageMimeType.value,
-      provider_id: selectedProvider.value,
+      imageFile: sourceImageFile,
+      providerId: selectedProvider.value,
+      onUpdate: (status) => {
+        if (createdTaskId) {
+          updateDirectTaskStatus(createdTaskId, status)
+        }
+      },
+      onComplete: () => {
+        if (createdTaskId) {
+          clearProgressTarget(createdTaskId)
+        }
+        void loadTasks()
+      },
+      onFail: (errorMessage) => {
+        if (createdTaskId) {
+          updateDirectTaskStatus(createdTaskId, {
+            status: 'failed',
+            progress: 100,
+            errorMessage,
+          })
+        }
+        void loadTasks()
+      },
     })
+    createdTaskId = response.taskId
+
     tasks.value.unshift({
-      taskId: response.data.taskId,
+      taskId: createdTaskId,
       providerId: selectedProvider.value,
       type: 'image_to_model',
       prompt: null,
-      status: response.data.status,
+      status: 'queued',
       progress: 0,
       creditCost: 0,
+      powerCost: 0,
       outputUrl: null,
       thumbnailUrl: null,
       thumbnailExpired: false,
+      directModeTask: response.mode === 'direct',
       resourceId: null,
       errorMessage: null,
       createdAt: new Date().toISOString(),
       completedAt: null,
+      expiresAt: null,
       downloadExpired: false,
     })
-    startPolling(response.data.taskId, updateTask)
+    if (response.mode === 'proxy') {
+      startPolling(createdTaskId, updateTask)
+    }
+    imageFile.value = null
     imageBase64.value = null
+    imagePreviewUrl.value = null
   } catch (error) {
     if (isInsufficientCreditsError(error)) {
       triggerDialog()
@@ -405,13 +673,7 @@ function handleImageChange(event: Event) {
   const target = event.target as HTMLInputElement
   const file = target.files?.[0]
   if (!file) return
-  imageMimeType.value = file.type
-  const reader = new FileReader()
-  reader.onload = () => {
-    const result = String(reader.result || '')
-    imageBase64.value = result.split(',')[1] || null
-  }
-  reader.readAsDataURL(file)
+  applyImageFile(file)
 }
 
 function getFilenameFromDisposition(contentDisposition: string | undefined, fallbackName: string): string {
@@ -459,12 +721,117 @@ async function upload(taskId: string, taskPrompt: string | null) {
     uploadingTaskId.value = null
   }
 }
+
+function openMainResource(resourceId: number | null) {
+  if (!resourceId) {
+    return
+  }
+
+  window.parent.postMessage(
+    {
+      type: 'EVENT',
+      id: `navigate-host-${resourceId}-${Date.now()}`,
+      payload: {
+        event: 'navigate-host',
+        path: '/resource/polygen/index',
+        query: {
+          lang: String(locale.value),
+          theme: String(themeName.value),
+          resourceId: String(resourceId),
+          open: '1',
+        },
+      },
+    },
+    '*',
+  )
+}
 </script>
 
 <style scoped>
 .page {
   display: grid;
   gap: 20px;
+}
+
+.image-upload-area {
+  margin-bottom: 12px;
+}
+
+.file-input-hidden {
+  display: none;
+}
+
+.image-placeholder {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  width: 100%;
+  height: 200px;
+  border: 2px dashed #dcdfe6;
+  border-radius: 8px;
+  cursor: pointer;
+  color: #909399;
+  transition: border-color 0.2s, color 0.2s;
+}
+
+.image-upload-area.drag-active .image-placeholder {
+  border-color: #409eff;
+  color: #409eff;
+  background: linear-gradient(135deg, #f4f9ff, #eef6ff);
+  box-shadow: 0 0 0 4px rgba(64, 158, 255, 0.12);
+}
+
+.image-placeholder:hover {
+  border-color: #409eff;
+  color: #409eff;
+}
+
+.image-preview {
+  position: relative;
+  display: inline-block;
+  cursor: pointer;
+  border: 2px dashed transparent;
+  border-radius: 8px;
+  overflow: hidden;
+  max-width: 100%;
+  transition: border-color 0.2s, box-shadow 0.2s;
+}
+
+.image-upload-area.drag-active .image-preview {
+  border-color: #409eff;
+  box-shadow: 0 0 0 4px rgba(64, 158, 255, 0.12);
+}
+
+.preview-img {
+  display: block;
+  max-width: 100%;
+  max-height: 300px;
+  object-fit: contain;
+  border-radius: 8px;
+}
+
+.preview-overlay {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(0, 0, 0, 0.4);
+  color: #fff;
+  font-size: 14px;
+  opacity: 0;
+  transition: opacity 0.2s;
+}
+
+.image-preview:hover .preview-overlay {
+  opacity: 1;
+}
+
+.image-upload-area.drag-active .preview-overlay {
+  opacity: 1;
+  background: rgba(64, 158, 255, 0.28);
 }
 
 .panel {
@@ -557,6 +924,11 @@ async function upload(taskId: string, taskPrompt: string | null) {
 .meta-item {
   display: inline-flex;
   align-items: center;
+}
+
+.expiry-urgent {
+  color: #dc2626;
+  font-weight: 600;
 }
 
 .task-top,

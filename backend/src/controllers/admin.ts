@@ -9,9 +9,11 @@
  */
 
 import { Router, Request, Response } from 'express';
+import { creditToPower } from '../config/providers';
 import { query } from '../db/connection';
 import { encrypt, decrypt } from '../services/crypto';
 import { providerRegistry } from '../adapters/ProviderRegistry';
+import { normalizeTaskBilling } from '../utils/taskBilling';
 
 export const adminRouter = Router();
 
@@ -140,6 +142,7 @@ adminRouter.get('/balance', async (req: Request, res: Response): Promise<void> =
     res.json({
       configured: true,
       available: balance.available,
+      availablePower: creditToPower(providerId, balance.available),
       frozen: balance.frozen,
     });
   } catch (err) {
@@ -164,43 +167,60 @@ adminRouter.get('/providers', (_req: Request, res: Response): void => {
 
 adminRouter.get('/usage', async (_req: Request, res: Response): Promise<void> => {
   try {
-    // 总消耗
-    const totalRows = await query<Array<{ total: number }>>(
-      "SELECT COALESCE(SUM(credit_cost), 0) AS total FROM tasks WHERE status = 'success'"
-    );
-    const totalCredits = Number(totalRows[0]?.total ?? 0);
-
-    // 按用户排行（Top 20）
-    const rankingRows = await query<Array<{ user_id: number; total_credits: number }>>(
-      `SELECT user_id, SUM(credit_cost) AS total_credits
+    const successRows = await query<
+      Array<{ user_id: number; provider_id: string; credit_cost: number; power_cost: number; created_at: string }>
+    >(
+      `SELECT user_id, provider_id, credit_cost, power_cost, created_at
        FROM tasks
-       WHERE status = 'success'
-       GROUP BY user_id
-       ORDER BY total_credits DESC
-       LIMIT 20`
+       WHERE status = 'success'`
     );
 
-    // 按日期趋势（最近 30 天）
-    const trendRows = await query<Array<{ date: string; credits: number }>>(
-      `SELECT DATE(created_at) AS date, SUM(credit_cost) AS credits
-       FROM tasks
-       WHERE status = 'success'
-         AND created_at >= DATE_SUB(CURDATE(), INTERVAL 30 DAY)
-       GROUP BY DATE(created_at)
-       ORDER BY date ASC`
-    );
+    let totalCredits = 0;
+    let totalPower = 0;
+    const rankingMap = new Map<number, { credits: number; power: number }>();
+    const dailyTrendMap = new Map<string, { credits: number; power: number }>();
+
+    for (const row of successRows) {
+      const billing = normalizeTaskBilling({
+        providerId: row.provider_id,
+        creditCost: row.credit_cost,
+        powerCost: row.power_cost,
+        status: 'success',
+      });
+      totalCredits += billing.creditCost;
+      totalPower += billing.powerCost;
+
+      const ranking = rankingMap.get(row.user_id) ?? { credits: 0, power: 0 };
+      ranking.credits += billing.creditCost;
+      ranking.power += billing.powerCost;
+      rankingMap.set(row.user_id, ranking);
+
+      const dateKey = new Date(row.created_at).toISOString().slice(0, 10);
+      const trend = dailyTrendMap.get(dateKey) ?? { credits: 0, power: 0 };
+      trend.credits += billing.creditCost;
+      trend.power += billing.powerCost;
+      dailyTrendMap.set(dateKey, trend);
+    }
 
     res.json({
-      totalCredits,
-      userRanking: rankingRows.map((r) => ({
-        userId: r.user_id,
-        username: `User ${r.user_id}`,
-        credits: Number(r.total_credits),
-      })),
-      dailyTrend: trendRows.map((r) => ({
-        date: r.date,
-        credits: Number(r.credits),
-      })),
+      totalCredits: Math.round(totalCredits * 100) / 100,
+      totalPower: Math.round(totalPower * 100) / 100,
+      userRanking: Array.from(rankingMap.entries())
+        .map(([userId, values]) => ({
+          userId,
+          username: `User ${userId}`,
+          credits: Math.round(values.credits * 100) / 100,
+          power: Math.round(values.power * 100) / 100,
+        }))
+        .sort((left, right) => right.credits - left.credits)
+        .slice(0, 20),
+      dailyTrend: Array.from(dailyTrendMap.entries())
+        .sort(([left], [right]) => left.localeCompare(right))
+        .map(([date, values]) => ({
+          date,
+          credits: Math.round(values.credits * 100) / 100,
+          power: Math.round(values.power * 100) / 100,
+        })),
     });
   } catch (err) {
     console.error('[AdminController] GET /usage error:', err);

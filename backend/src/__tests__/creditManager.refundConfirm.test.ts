@@ -1,5 +1,5 @@
 /**
- * Unit tests for CreditManager.refund and CreditManager.confirmDeduct
+ * Unit tests for the unified power-account refund and confirm flow
  * Validates: Requirements 3.4, 8.1
  */
 
@@ -43,46 +43,41 @@ describe('CreditManager.refund', () => {
     mockRelease.mockReturnValue(undefined);
   });
 
-  // Requirement 3.4: refund restores wallet and pool from pre_deduct ledger record
   it('restores wallet and pool balances based on pre_deduct ledger record', async () => {
-    // pre_deduct record: wallet_delta=-30, pool_delta=-50
     mockQuery
-      .mockResolvedValueOnce([[{ wallet_delta: '-30.00', pool_delta: '-50.00' }]]) // SELECT ledger
-      .mockResolvedValueOnce([{ affectedRows: 1 }]) // UPDATE user_accounts
-      .mockResolvedValueOnce([{}]); // INSERT refund ledger
+      .mockResolvedValueOnce([[{ wallet_delta: '-30.00', pool_delta: '-50.00', provider_id: PROVIDER_ID }]])
+      .mockResolvedValueOnce([{ affectedRows: 1 }])
+      .mockResolvedValueOnce([{}]);
 
     await manager.refund(1, 'tripo3d', 'task-001');
 
-    // UPDATE should add walletRefund=30 to wallet, poolRefund=50 to pool
     const updateCall = mockQuery.mock.calls[1];
-    expect(updateCall[1]).toEqual([30, 50, 1, 'tripo3d']);
+    expect(updateCall[0]).toContain('UPDATE power_accounts');
+    expect(updateCall[1]).toEqual([30, 50, 1]);
 
-    // INSERT refund ledger with positive deltas
     const ledgerCall = mockQuery.mock.calls[2];
-    expect(ledgerCall[0]).toContain('credit_ledger');
+    expect(ledgerCall[0]).toContain('power_ledger');
     expect(ledgerCall[0]).toContain('refund');
-    expect(ledgerCall[1]).toEqual([1, 'tripo3d', 30, 50, 'task-001']);
+    expect(ledgerCall[1]).toEqual([1, 30, 50, 'task-001', 'tripo3d', 80]);
 
     expect(mockCommit).toHaveBeenCalled();
   });
 
-  // Requirement 3.4: refund when only wallet was deducted
   it('restores only wallet when pool_delta was 0', async () => {
     mockQuery
-      .mockResolvedValueOnce([[{ wallet_delta: '-80.00', pool_delta: '0.00' }]])
+      .mockResolvedValueOnce([[{ wallet_delta: '-80.00', pool_delta: '0.00', provider_id: PROVIDER_ID }]])
       .mockResolvedValueOnce([{ affectedRows: 1 }])
       .mockResolvedValueOnce([{}]);
 
     await manager.refund(1, 'tripo3d', 'task-002');
 
     const updateCall = mockQuery.mock.calls[1];
-    expect(updateCall[1]).toEqual([80, 0, 1, 'tripo3d']);
+    expect(updateCall[1]).toEqual([80, 0, 1]);
 
     const ledgerCall = mockQuery.mock.calls[2];
-    expect(ledgerCall[1]).toEqual([1, 'tripo3d', 80, 0, 'task-002']);
+    expect(ledgerCall[1]).toEqual([1, 80, 0, 'task-002', 'tripo3d', 80]);
   });
 
-  // No pre_deduct record found — should rollback and return without error
   it('rolls back and returns silently when no pre_deduct record found', async () => {
     mockQuery.mockResolvedValueOnce([[]]); // empty ledger rows
 
@@ -92,7 +87,6 @@ describe('CreditManager.refund', () => {
     expect(mockCommit).not.toHaveBeenCalled();
   });
 
-  // Requirement 8.1: atomicity — rollback on DB error
   it('rolls back transaction on unexpected DB error', async () => {
     mockQuery.mockRejectedValueOnce(new Error('DB error'));
 
@@ -101,10 +95,9 @@ describe('CreditManager.refund', () => {
     expect(mockRelease).toHaveBeenCalled();
   });
 
-  // Connection always released
   it('always releases the connection', async () => {
     mockQuery
-      .mockResolvedValueOnce([[{ wallet_delta: '-20.00', pool_delta: '-30.00' }]])
+      .mockResolvedValueOnce([[{ wallet_delta: '-20.00', pool_delta: '-30.00', provider_id: PROVIDER_ID }]])
       .mockResolvedValueOnce([{ affectedRows: 1 }])
       .mockResolvedValueOnce([{}]);
 
@@ -125,22 +118,19 @@ describe('CreditManager.confirmDeduct', () => {
     mockRelease.mockReturnValue(undefined);
   });
 
-  // Requirement 3.1: queries pre_deduct records to compute preDeducted total
   it('queries pre_deduct ledger records for the given taskId', async () => {
-    // pre_deduct: wallet=-30, pool=-20 => preDeducted=50, actual=50 => diff=0
     mockQuery
-      .mockResolvedValueOnce([[{ wallet_delta: '-30.00', pool_delta: '-20.00' }]]) // SELECT pre_deduct
-      .mockResolvedValueOnce([{}]); // INSERT confirm_deduct ledger
+      .mockResolvedValueOnce([[{ wallet_delta: '-30.00', pool_delta: '-20.00', provider_id: PROVIDER_ID }]])
+      .mockResolvedValueOnce([{}]);
 
     const result = await manager.confirmDeduct(1, PROVIDER_ID, 'task-001', 50);
 
     const selectCall = mockQuery.mock.calls[0];
     expect(selectCall[0]).toContain('pre_deduct');
-    expect(selectCall[1]).toEqual([1, PROVIDER_ID, 'task-001']);
+    expect(selectCall[1]).toEqual([1, 'task-001']);
 
-    // Verify ledger records wallet_delta and pool_delta proportionally
     const ledgerCall = mockQuery.mock.calls[1];
-    expect(ledgerCall[1]).toEqual([1, PROVIDER_ID, -30, -20, 'task-001', 'actual=50']);
+    expect(ledgerCall[1]).toEqual([1, -30, -20, 'task-001', 'tripo3d', 0, 50, 'actual=50']);
 
     expect(mockCommit).toHaveBeenCalled();
     expect(result).toEqual({
@@ -150,48 +140,39 @@ describe('CreditManager.confirmDeduct', () => {
     });
   });
 
-  // Requirement 3.2: actual < preDeducted — refund diff to Pool (priority) then Wallet
   it('refunds diff to pool (priority) then wallet when actual < preDeducted', async () => {
-    // pre_deduct: wallet=-20, pool=-30 => preDeducted=50, actual=40 => diff=-10 => refund=10
     mockQuery
-      .mockResolvedValueOnce([[{ wallet_delta: '-20.00', pool_delta: '-30.00' }]]) // SELECT pre_deduct
-      .mockResolvedValueOnce([[{ pool_balance: '100.00' }]])                        // SELECT FOR UPDATE
-      .mockResolvedValueOnce([{ affectedRows: 1 }])                                // UPDATE user_accounts
-      .mockResolvedValueOnce([{}]);                                                 // INSERT confirm_deduct ledger
+      .mockResolvedValueOnce([[{ wallet_delta: '-20.00', pool_delta: '-30.00', provider_id: PROVIDER_ID }]])
+      .mockResolvedValueOnce([[{ user_id: 1 }]])
+      .mockResolvedValueOnce([{ affectedRows: 1 }])
+      .mockResolvedValueOnce([{}]);
 
     await manager.confirmDeduct(1, PROVIDER_ID, 'task-002', 40);
 
-    // UPDATE should add poolRefund=10 to pool, walletRefund=0 to wallet
     const updateCall = mockQuery.mock.calls[2];
-    expect(updateCall[0]).toContain('UPDATE user_accounts');
-    expect(updateCall[1]).toEqual([10, 0, 1, PROVIDER_ID]); // poolRefund=10, walletRefund=0
+    expect(updateCall[0]).toContain('UPDATE power_accounts');
+    expect(updateCall[1]).toEqual([0, 10, 1]);
 
     expect(mockCommit).toHaveBeenCalled();
   });
 
-  // Requirement 3.2: refund spills to wallet when diff > preDeductedPool
   it('refunds to wallet when refund amount exceeds preDeductedPool', async () => {
-    // pre_deduct: wallet=-40, pool=-5 => preDeducted=45, actual=30 => diff=-15 => refund=15
-    // poolRefund = min(15, 5) = 5, walletRefund = 10
     mockQuery
-      .mockResolvedValueOnce([[{ wallet_delta: '-40.00', pool_delta: '-5.00' }]])
-      .mockResolvedValueOnce([[{ pool_balance: '100.00' }]])
+      .mockResolvedValueOnce([[{ wallet_delta: '-40.00', pool_delta: '-5.00', provider_id: PROVIDER_ID }]])
+      .mockResolvedValueOnce([[{ user_id: 1 }]])
       .mockResolvedValueOnce([{ affectedRows: 1 }])
       .mockResolvedValueOnce([{}]);
 
     await manager.confirmDeduct(1, PROVIDER_ID, 'task-003', 30);
 
     const updateCall = mockQuery.mock.calls[2];
-    expect(updateCall[1]).toEqual([5, 10, 1, PROVIDER_ID]); // poolRefund=5, walletRefund=10
+    expect(updateCall[1]).toEqual([10, 5, 1]);
     expect(mockCommit).toHaveBeenCalled();
   });
 
-  // Requirement 3.3: actual > preDeducted — extra deduct from Pool then Wallet
   it('extra deducts from pool (priority) then wallet when actual > preDeducted', async () => {
-    // pre_deduct: wallet=-20, pool=-20 => preDeducted=40, actual=50 => diff=10
-    // pool=100, wallet=50 => poolExtra=10, walletExtra=0
     mockQuery
-      .mockResolvedValueOnce([[{ wallet_delta: '-20.00', pool_delta: '-20.00' }]])
+      .mockResolvedValueOnce([[{ wallet_delta: '-20.00', pool_delta: '-20.00', provider_id: PROVIDER_ID }]])
       .mockResolvedValueOnce([[{ wallet_balance: '50.00', pool_balance: '100.00' }]])
       .mockResolvedValueOnce([{ affectedRows: 1 }])
       .mockResolvedValueOnce([{}]);
@@ -199,18 +180,15 @@ describe('CreditManager.confirmDeduct', () => {
     const result = await manager.confirmDeduct(1, PROVIDER_ID, 'task-004', 50);
 
     const updateCall = mockQuery.mock.calls[2];
-    expect(updateCall[0]).toContain('UPDATE user_accounts');
-    expect(updateCall[1]).toEqual([10, 0, 1, PROVIDER_ID]); // poolExtra=10, walletExtra=0
+    expect(updateCall[0]).toContain('UPDATE power_accounts');
+    expect(updateCall[1]).toEqual([10, 0, 1]);
     expect(mockCommit).toHaveBeenCalled();
     expect(result.billingStatus).toBe('settled');
   });
 
-  // Requirement 3.3: extra deduct spills to wallet when pool insufficient
   it('extra deducts from wallet when pool is insufficient', async () => {
-    // pre_deduct: wallet=-20, pool=-20 => preDeducted=40, actual=50 => diff=10
-    // pool=5, wallet=50 => poolExtra=5, walletExtra=5
     mockQuery
-      .mockResolvedValueOnce([[{ wallet_delta: '-20.00', pool_delta: '-20.00' }]])
+      .mockResolvedValueOnce([[{ wallet_delta: '-20.00', pool_delta: '-20.00', provider_id: PROVIDER_ID }]])
       .mockResolvedValueOnce([[{ wallet_balance: '50.00', pool_balance: '5.00' }]])
       .mockResolvedValueOnce([{ affectedRows: 1 }])
       .mockResolvedValueOnce([{}]);
@@ -218,17 +196,14 @@ describe('CreditManager.confirmDeduct', () => {
     await manager.confirmDeduct(1, PROVIDER_ID, 'task-005', 50);
 
     const updateCall = mockQuery.mock.calls[2];
-    expect(updateCall[1]).toEqual([5, 5, 1, PROVIDER_ID]); // poolExtra=5, walletExtra=5
+    expect(updateCall[1]).toEqual([5, 5, 1]);
     expect(mockCommit).toHaveBeenCalled();
   });
 
-  // Requirement 3.3: logs warning when balance insufficient for extra deduct, does not throw
   it('returns undercharged result when balance is insufficient for extra deduct', async () => {
     const warnSpy = jest.spyOn(console, 'warn').mockImplementation(() => {});
-    // pre_deduct: wallet=-10, pool=-10 => preDeducted=20, actual=50 => diff=30
-    // pool=5, wallet=5 => totalExtra=10 < 30
     mockQuery
-      .mockResolvedValueOnce([[{ wallet_delta: '-10.00', pool_delta: '-10.00' }]])
+      .mockResolvedValueOnce([[{ wallet_delta: '-10.00', pool_delta: '-10.00', provider_id: PROVIDER_ID }]])
       .mockResolvedValueOnce([[{ wallet_balance: '5.00', pool_balance: '5.00' }]])
       .mockResolvedValueOnce([{ affectedRows: 1 }])
       .mockResolvedValueOnce([{}]);
@@ -244,10 +219,12 @@ describe('CreditManager.confirmDeduct', () => {
     const ledgerCall = mockQuery.mock.calls[3];
     expect(ledgerCall[1]).toEqual([
       1,
-      PROVIDER_ID,
       -5,
       -5,
       'task-006',
+      'tripo3d',
+      0,
+      50,
       'actual=50,pre=20,extra=30,shortfall=20',
     ]);
     expect(mockCommit).toHaveBeenCalled();
@@ -255,10 +232,9 @@ describe('CreditManager.confirmDeduct', () => {
   });
 
   it('does not write legacy credit_usage records during confirmDeduct', async () => {
-    // diff=0 case: wallet=-30, pool=-20 => preDeducted=50, actual=50
     mockQuery
-      .mockResolvedValueOnce([[{ wallet_delta: '-30.00', pool_delta: '-20.00' }]])
-      .mockResolvedValueOnce([{}]); // INSERT confirm_deduct ledger
+      .mockResolvedValueOnce([[{ wallet_delta: '-30.00', pool_delta: '-20.00', provider_id: PROVIDER_ID }]])
+      .mockResolvedValueOnce([{}]);
 
     await manager.confirmDeduct(1, PROVIDER_ID, 'task-007', 50);
 
@@ -267,7 +243,6 @@ describe('CreditManager.confirmDeduct', () => {
     expect(mockCommit).toHaveBeenCalled();
   });
 
-  // Requirement 3.4: atomicity — rollback on DB error
   it('rolls back transaction on unexpected DB error', async () => {
     mockQuery.mockRejectedValueOnce(new Error('DB write error'));
 
@@ -276,10 +251,9 @@ describe('CreditManager.confirmDeduct', () => {
     expect(mockRelease).toHaveBeenCalled();
   });
 
-  // Connection always released
   it('always releases the connection', async () => {
     mockQuery
-      .mockResolvedValueOnce([[{ wallet_delta: '-10.00', pool_delta: '-10.00' }]])
+      .mockResolvedValueOnce([[{ wallet_delta: '-10.00', pool_delta: '-10.00', provider_id: PROVIDER_ID }]])
       .mockResolvedValueOnce([{}]);
 
     await manager.confirmDeduct(1, PROVIDER_ID, 'task-009', 20);
@@ -302,48 +276,84 @@ describe('CreditManager.finalizeTaskSuccess', () => {
   it('updates task state in the same transaction after successful billing confirmation', async () => {
     mockQuery
       .mockResolvedValueOnce([[{ status: 'processing', error_message: null }]])
-      .mockResolvedValueOnce([[{ wallet_delta: '-30.00', pool_delta: '0.00' }]])
+      .mockResolvedValueOnce([[{ wallet_delta: '-1.00', pool_delta: '0.00', provider_id: PROVIDER_ID }]])
       .mockResolvedValueOnce([{}])
       .mockResolvedValueOnce([{ affectedRows: 1 }]);
 
-    const result = await manager.finalizeTaskSuccess(1, PROVIDER_ID, 'task-010', 'https://example.com/model.glb', 30);
+    const result = await manager.finalizeTaskSuccess(
+      1,
+      PROVIDER_ID,
+      'task-010',
+      'https://example.com/model.glb',
+      1,
+      30
+    );
 
     expect(result.billingStatus).toBe('settled');
-    const taskUpdateCall = mockQuery.mock.calls[3];
+    const taskUpdateCall = mockQuery.mock.calls.find((call: any[]) => call[0].includes('UPDATE tasks'));
     expect(taskUpdateCall[0]).toContain("SET status = 'success'");
     expect(taskUpdateCall[1]).toEqual([
       'https://example.com/model.glb',
       null,
       30,
+      1,
       null,
       'task-010',
     ]);
     expect(mockCommit).toHaveBeenCalled();
   });
 
+  it('stores both credit_cost and power_cost on the task row', async () => {
+    mockQuery
+      .mockResolvedValueOnce([[{ status: 'processing', error_message: null }]])
+      .mockResolvedValueOnce([[{ wallet_delta: '-1.00', pool_delta: '0.00' }]])
+      .mockResolvedValueOnce([{}])
+      .mockResolvedValueOnce([{ affectedRows: 1 }]);
+
+    await manager.finalizeTaskSuccess(
+      1,
+      PROVIDER_ID,
+      'task-010b',
+      'https://example.com/model.glb',
+      1,
+      30
+    );
+
+    const taskUpdateCall = mockQuery.mock.calls.find((call: any[]) => call[0].includes('UPDATE tasks'));
+    expect(taskUpdateCall[0]).toContain('credit_cost = ?');
+    expect(taskUpdateCall[0]).toContain('power_cost = ?');
+  });
+
   it('stores undercharged billing message on the task when extra deduction is incomplete', async () => {
     const warnSpy = jest.spyOn(console, 'warn').mockImplementation(() => {});
     mockQuery
       .mockResolvedValueOnce([[{ status: 'processing', error_message: null }]])
-      .mockResolvedValueOnce([[{ wallet_delta: '-10.00', pool_delta: '-10.00' }]])
-      .mockResolvedValueOnce([[{ wallet_balance: '5.00', pool_balance: '5.00' }]])
+      .mockResolvedValueOnce([[{ wallet_delta: '-1.00', pool_delta: '0.00' }]])
+      .mockResolvedValueOnce([[{ wallet_balance: '0.10', pool_balance: '0.10' }]])
       .mockResolvedValueOnce([{ affectedRows: 1 }])
       .mockResolvedValueOnce([{}])
       .mockResolvedValueOnce([{ affectedRows: 1 }]);
 
-    const result = await manager.finalizeTaskSuccess(1, PROVIDER_ID, 'task-011', 'https://example.com/model.glb', 50);
+    const result = await manager.finalizeTaskSuccess(
+      1,
+      PROVIDER_ID,
+      'task-011',
+      'https://example.com/model.glb',
+      1.67,
+      50
+    );
 
-    expect(result).toEqual({
-      billingStatus: 'undercharged',
-      billingMessage: '计费待补扣：shortfall=20, actual=50',
-      shortfallAmount: 20,
-    });
-    const taskUpdateCall = mockQuery.mock.calls[5];
+    expect(result.billingStatus).toBe('undercharged');
+    expect(result.billingMessage).toContain('shortfall=');
+    expect(result.billingMessage).toContain('actual=1.67');
+    expect(result.shortfallAmount).toBeCloseTo(0.47, 2);
+    const taskUpdateCall = mockQuery.mock.calls.find((call: any[]) => call[0].includes('UPDATE tasks'));
     expect(taskUpdateCall[1]).toEqual([
       'https://example.com/model.glb',
       null,
       50,
-      '计费待补扣：shortfall=20, actual=50',
+      1.67,
+      result.billingMessage,
       'task-011',
     ]);
     warnSpy.mockRestore();
@@ -352,7 +362,7 @@ describe('CreditManager.finalizeTaskSuccess', () => {
   it('persists thumbnail_url together with output_url when finalizing success', async () => {
     mockQuery
       .mockResolvedValueOnce([[{ status: 'processing', error_message: null }]])
-      .mockResolvedValueOnce([[{ wallet_delta: '-30.00', pool_delta: '0.00' }]])
+      .mockResolvedValueOnce([[{ wallet_delta: '-1.00', pool_delta: '0.00' }]])
       .mockResolvedValueOnce([{}])
       .mockResolvedValueOnce([{ affectedRows: 1 }]);
 
@@ -361,16 +371,18 @@ describe('CreditManager.finalizeTaskSuccess', () => {
       PROVIDER_ID,
       'task-012',
       'https://example.com/model.glb',
+      1,
       30,
       'https://example.com/preview.webp'
     );
 
-    const taskUpdateCall = mockQuery.mock.calls[3];
+    const taskUpdateCall = mockQuery.mock.calls.find((call: any[]) => call[0].includes('UPDATE tasks'));
     expect(taskUpdateCall[0]).toContain('thumbnail_url = ?');
     expect(taskUpdateCall[1]).toEqual([
       'https://example.com/model.glb',
       'https://example.com/preview.webp',
       30,
+      1,
       null,
       'task-012',
     ]);

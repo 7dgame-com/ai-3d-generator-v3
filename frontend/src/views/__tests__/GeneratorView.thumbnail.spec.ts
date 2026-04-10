@@ -12,7 +12,7 @@ const mocks = vi.hoisted(() => ({
   checkCredits: vi.fn(),
   triggerDialog: vi.fn(),
   closeDialog: vi.fn(),
-  createTask: vi.fn(),
+  directCreateTask: vi.fn(),
   downloadTaskFile: vi.fn(),
   fetchThumbnailBlob: vi.fn(),
   getEnabledProviders: vi.fn(),
@@ -27,7 +27,6 @@ const mocks = vi.hoisted(() => ({
 }))
 
 vi.mock('../../api', () => ({
-  createTask: mocks.createTask,
   downloadTaskFile: mocks.downloadTaskFile,
   fetchThumbnailBlob: mocks.fetchThumbnailBlob,
   getEnabledProviders: mocks.getEnabledProviders,
@@ -61,6 +60,13 @@ vi.mock('../../composables/useCreditCheck', () => ({
     checkCredits: mocks.checkCredits,
     triggerDialog: mocks.triggerDialog,
     closeDialog: mocks.closeDialog,
+  }),
+}))
+
+vi.mock('../../composables/useDirectTaskCreation', () => ({
+  useDirectTaskCreation: () => ({
+    createTask: mocks.directCreateTask,
+    isCreating: { value: false, __v_isRef: true },
   }),
 }))
 
@@ -157,7 +163,7 @@ describe('GeneratorView thumbnail preview', () => {
     mocks.checkCredits.mockReset()
     mocks.triggerDialog.mockReset()
     mocks.closeDialog.mockReset()
-    mocks.createTask.mockReset()
+    mocks.directCreateTask.mockReset()
     mocks.downloadTaskFile.mockReset()
     mocks.fetchThumbnailBlob.mockReset()
     mocks.getEnabledProviders.mockReset()

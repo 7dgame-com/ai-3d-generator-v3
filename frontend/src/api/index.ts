@@ -112,11 +112,13 @@ export type TaskStatus = 'queued' | 'processing' | 'success' | 'failed' | 'timeo
 export interface Task {
   taskId: string
   providerId?: string
+  directModeTask?: boolean
   type: 'text_to_model' | 'image_to_model'
   prompt: string | null
   status: TaskStatus
   progress: number
   creditCost: number
+  powerCost: number
   outputUrl: string | null
   thumbnailUrl: string | null
   thumbnailExpired: boolean
@@ -124,7 +126,9 @@ export interface Task {
   errorMessage: string | null
   createdAt: string
   completedAt: string | null
+  expiresAt: string | null
   downloadExpired?: boolean
+  fileSize?: number | null
 }
 
 export interface UsageHistoryItem {
@@ -132,18 +136,59 @@ export interface UsageHistoryItem {
   type: 'text_to_model' | 'image_to_model'
   prompt: string | null
   creditsUsed: number
+  powerUsed: number
   createdAt: string
   status: TaskStatus
 }
 
-export interface ProviderCreditStatus {
-  provider_id: string
+export interface PowerAccountStatus {
   wallet_balance: number
   pool_balance: number
   pool_baseline: number
   cycles_remaining: number
+  cycle_duration: number
+  total_duration: number
   cycle_started_at: string | null
   next_cycle_at: string | null
+}
+
+export interface PrepareTaskResponse {
+  apiKey: string
+  prepareToken: string
+  providerId: string
+  estimatedPower: number
+  apiBaseUrl: string
+  modelVersion?: string
+  mode: 'direct' | 'proxy'
+}
+
+export interface CloudBucketConfig {
+  bucket: string
+  region: string
+}
+
+export interface MainCloudConfig {
+  public?: CloudBucketConfig
+  private?: CloudBucketConfig
+  bucket?: string
+  region?: string
+}
+
+export interface CosTokenResponse {
+  Credentials?: {
+    TmpSecretId: string
+    TmpSecretKey: string
+    Token: string
+  }
+  StartTime?: number
+  ExpiredTime?: number
+  credentials?: {
+    tmpSecretId: string
+    tmpSecretKey: string
+    sessionToken: string
+  }
+  startTime?: number
+  expiredTime?: number
 }
 
 export const createTask = (payload: {
@@ -154,7 +199,8 @@ export const createTask = (payload: {
   provider_id?: string
 }) => backendApi.post<{ taskId: string; status: TaskStatus }>('/tasks', payload, { timeout: 90000 })
 
-export const listTasks = () => backendApi.get<{ data: Task[]; total: number }>('/tasks')
+export const listTasks = (params?: { page?: number; pageSize?: number }) =>
+  backendApi.get<{ data: Task[]; total: number; page: number; pageSize: number }>('/tasks', { params })
 export const getTask = (taskId: string) => backendApi.get<Task>(`/tasks/${taskId}`)
 export const getDownloadUrl = (taskId: string) => backendApi.get<{ url: string }>(`/tasks/${taskId}/download-url`)
 export const downloadTaskFile = (taskId: string) =>
@@ -163,6 +209,34 @@ export const downloadTaskBuffer = (taskId: string) =>
   backendApi.get<ArrayBuffer>(`/download/${taskId}`, { responseType: 'arraybuffer' })
 export const updateTaskResource = (taskId: string, resourceId: number) =>
   backendApi.put<{ success: boolean }>(`/tasks/${taskId}/resource`, { resource_id: resourceId })
+
+export const prepareTask = (payload: {
+  type: 'text_to_model' | 'image_to_model'
+  provider_id: string
+}) => backendApi.post<PrepareTaskResponse>('/tasks/prepare', payload, { timeout: 90000 })
+
+export const registerTask = (payload: {
+  prepareToken: string
+  taskId: string
+  type: 'text_to_model' | 'image_to_model'
+  prompt?: string
+  pollingKey?: string
+}) => backendApi.post<{ success: boolean }>('/tasks/register', payload)
+
+export const completeTask = (taskId: string, payload: {
+  prepareToken: string
+  outputUrl: string
+  thumbnailUrl?: string
+  creditCost: number
+}) => backendApi.post<{ success: boolean; billingStatus: 'settled' | 'undercharged'; billingMessage?: string }>(
+  `/tasks/${taskId}/complete`,
+  payload
+)
+
+export const failTask = (taskId: string, payload: {
+  prepareToken: string
+  errorMessage?: string
+}) => backendApi.post<{ success: boolean }>(`/tasks/${taskId}/fail`, payload)
 
 export const getAdminConfig = (providerId?: string) =>
   backendApi.get<{ configured: boolean; apiKeyMasked?: string }>('/admin/config', {
@@ -175,28 +249,28 @@ export const saveAdminConfig = (apiKey: string, providerId: string) =>
 export const getEnabledProviders = () => backendApi.get<{ providers: string[] }>('/admin/providers')
 
 export const getAdminBalance = (providerId: string) =>
-  backendApi.get<{ configured: boolean; available?: number; frozen?: number }>('/admin/balance', {
+  backendApi.get<{ configured: boolean; available?: number; availablePower?: number; frozen?: number }>('/admin/balance', {
     params: { provider_id: providerId },
   })
 
 export const getAdminUsage = () =>
   backendApi.get<{
     totalCredits: number
-    userRanking: Array<{ userId: number; username: string; credits: number }>
-    dailyTrend: Array<{ date: string; credits: number }>
+    totalPower: number
+    userRanking: Array<{ userId: number; username: string; credits: number; power: number }>
+    dailyTrend: Array<{ date: string; credits: number; power: number }>
   }>('/admin/usage')
 
 export const getCreditStatus = (providerId?: string) =>
-  backendApi.get<{ data: ProviderCreditStatus[] }>('/credits/status', {
+  backendApi.get<{ data: PowerAccountStatus }>('/credits/status', {
     params: providerId ? { provider_id: providerId } : undefined,
   })
 
 export const getAdminCreditStatus = (userId: number) =>
-  backendApi.get<{ data: ProviderCreditStatus[] }>(`/admin/credits/${userId}`)
+  backendApi.get<{ data: PowerAccountStatus }>(`/admin/credits/${userId}`)
 
 export const rechargeAdminCredits = (payload: {
   userId: number
-  provider_id: string
   wallet_amount: number
   pool_amount: number
   total_duration: number
@@ -206,9 +280,11 @@ export const rechargeAdminCredits = (payload: {
 export const getUsageSummary = () =>
   backendApi.get<{
     totalCredits: number
+    totalPower: number
     monthCredits: number
+    monthPower: number
     taskCount: number
-    dailyTrend: Array<{ date: string; credits: number }>
+    dailyTrend: Array<{ date: string; credits: number; power: number }>
   }>('/usage')
 
 export const fetchThumbnailBlob = (taskId: string) =>
@@ -230,13 +306,9 @@ export const getAllowedActions = () =>
     params: { plugin_name: 'ai-3d-generator-v3' },
   })
 
-export const getCloudConfig = () => mainApi.get<{ bucket: string; region: string }>('/v1/tencent-clouds/cloud')
-export const getCosToken = () =>
-  mainApi.get<{
-    credentials: { tmpSecretId: string; tmpSecretKey: string; sessionToken: string }
-    expiredTime: number
-    startTime?: number
-  }>('/v1/tencent-clouds/token')
+export const getCloudConfig = () => mainApi.get<MainCloudConfig>('/v1/tencent-cloud/cloud')
+export const getCosPublicToken = () =>
+  mainApi.get<CosTokenResponse>('/v1/tencent-cloud/public-token', { params: {} })
 
 export const createFileRecord = (payload: {
   filename: string
@@ -248,5 +320,6 @@ export const createFileRecord = (payload: {
 export const createResourceRecord = (payload: {
   name: string
   file_id: number
+  image_id?: number
   type: string
 }) => mainApi.post<{ id: number }>('/v1/resources', payload)

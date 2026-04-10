@@ -77,14 +77,13 @@ generate_lb_config() {
     eval "url=\$LB_URL_1"
     eval "host=\$LB_HOST_1"
 
-    echo "[entrypoint] Mode: single backend (resolver-enabled)"
+    echo "[entrypoint] Mode: single backend (direct upstream)"
 
     CHAIN_RESULT="
-    # ============ 反向代理 - ${LOC_PATH} (单后端 + DNS 动态解析) ============
+    # ============ 反向代理 - ${LOC_PATH} (单后端直连) ============
     location ${LOC_PATH} {
-        set \$${PREFIX_NAME}_single_backend \"${url}\";
         rewrite ^${LOC_PATH}(.*)\$ /\$1 break;
-        proxy_pass \$${PREFIX_NAME}_single_backend;
+        proxy_pass ${url};
 
         proxy_ssl_server_name on;
         proxy_set_header Host ${host};

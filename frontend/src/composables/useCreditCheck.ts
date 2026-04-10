@@ -1,23 +1,23 @@
 import { computed, ref } from 'vue'
-import { getCreditStatus, type ProviderCreditStatus } from '../api'
+import { getCreditStatus, type PowerAccountStatus } from '../api'
 import { usePermissions } from './usePermissions'
 
-export function isAllCreditsZero(statuses: ProviderCreditStatus[]): boolean {
-  return statuses.length > 0 && statuses.every((status) => status.wallet_balance + status.pool_balance <= 0)
+export function isAllCreditsZero(status: PowerAccountStatus | null | undefined): boolean {
+  return !!status && status.wallet_balance + status.pool_balance <= 0
 }
 
 export function useCreditCheck() {
-  const { can } = usePermissions()
+  const { can, isRootUser } = usePermissions()
   const showCreditDialog = ref(false)
-  const isAdmin = computed(() => can('admin-config'))
+  const isAdmin = computed(() => can('admin-config') && isRootUser.value)
 
   async function checkCredits(): Promise<void> {
     try {
       const response = await getCreditStatus()
-      const statuses = response.data.data ?? []
-      const shouldShowDialog = isAllCreditsZero(statuses)
+      const status = response.data.data ?? null
+      const shouldShowDialog = isAllCreditsZero(status)
       console.info('[useCreditCheck] /credits/status result', {
-        statuses,
+        status,
         shouldShowDialog,
       })
       showCreditDialog.value = shouldShowDialog

@@ -8,7 +8,7 @@
       <nav class="nav">
         <router-link to="/">{{ t('nav.generator') }}</router-link>
         <router-link v-if="can('view-usage')" to="/history">{{ t('nav.history') }}</router-link>
-        <router-link v-if="can('admin-config')" to="/admin">{{ t('nav.admin') }}</router-link>
+        <router-link v-if="can('admin-config') && isRootUser" to="/admin">{{ t('nav.admin') }}</router-link>
       </nav>
     </header>
     <main class="content">
@@ -23,7 +23,7 @@ import { useI18n } from 'vue-i18n'
 import { usePermissions } from '../composables/usePermissions'
 
 const { t } = useI18n()
-const { can, fetchAllowedActions } = usePermissions()
+const { can, fetchAllowedActions, isRootUser } = usePermissions()
 
 onMounted(() => {
   void fetchAllowedActions()

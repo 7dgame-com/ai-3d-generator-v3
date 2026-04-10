@@ -11,11 +11,14 @@ import cors from 'cors';
 import { testConnection } from './db/connection';
 import { startPoller } from './services/taskPoller';
 import { startScheduler, stopScheduler } from './services/quotaScheduler';
+import { startTimeoutGuardian, stopTimeoutGuardian } from './services/timeoutGuardian';
 import { parseEnabledProviders } from './config/providers';
 import { providerRegistry } from './adapters/ProviderRegistry';
 import { tripo3dAdapter } from './adapters/Tripo3DAdapter';
 import { hyper3dAdapter } from './adapters/Hyper3DAdapter';
 import adminRoutes from './routes/admin';
+import directTaskRoutes from './routes/directTask';
+import proxyRoutes from './routes/proxy';
 import taskRoutes from './routes/task';
 import usageRoutes from './routes/usage';
 import downloadRoutes from './routes/download';
@@ -47,6 +50,8 @@ app.get('/health', (_req: Request, res: Response) => {
 // ========== 路由注册 ==========
 // nginx rewrite 会去掉 /backend/ 前缀，所以这里挂载到根路径
 app.use('/', adminRoutes);
+app.use('/tasks', directTaskRoutes);
+app.use('/proxy', proxyRoutes);
 app.use('/tasks', taskRoutes);
 app.use('/usage', usageRoutes);
 app.use('/download', downloadRoutes);
@@ -84,6 +89,7 @@ app.listen(PORT, async () => {
 
       await startPoller();
       await startScheduler();
+      startTimeoutGuardian();
     } catch (err) {
       console.error('[Server] 关键服务启动失败，退出:', (err as Error).message);
       process.exit(1);
@@ -93,12 +99,14 @@ app.listen(PORT, async () => {
 // ========== 进程退出时清理 ==========
 process.on('SIGTERM', () => {
   console.log('[Server] 收到 SIGTERM，正在关闭...');
+  stopTimeoutGuardian();
   stopScheduler();
   process.exit(0);
 });
 
 process.on('SIGINT', () => {
   console.log('[Server] 收到 SIGINT，正在关闭...');
+  stopTimeoutGuardian();
   stopScheduler();
   process.exit(0);
 });

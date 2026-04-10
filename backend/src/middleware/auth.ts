@@ -23,6 +23,7 @@ const MAIN_API_URL = process.env.MAIN_API_URL || 'http://localhost:8081';
 export interface UserInfo {
   userId: number;
   username?: string;
+  roles?: string[];
   [key: string]: unknown;
 }
 

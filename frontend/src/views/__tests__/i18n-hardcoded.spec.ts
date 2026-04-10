@@ -14,7 +14,7 @@ describe('view i18n source wiring', () => {
     expect(source).toContain("t('admin.queryFailed')")
     expect(source).toContain("t('admin.rechargeFailed')")
     expect(source).toContain("t('common.required', { field: t('admin.userId') })")
-    expect(source).toContain("t('common.required', { field: t('admin.provider') })")
+    expect(source).not.toContain("t('common.required', { field: t('admin.provider') })")
     expect(source).toContain('locale.value')
 
     expect(source).not.toContain("'保存失败'")
@@ -28,13 +28,21 @@ describe('view i18n source wiring', () => {
 
     expect(source).toContain(":label=\"t('history.colTaskId')\"")
     expect(source).toContain(":label=\"t('history.colType')\"")
-    expect(source).toContain(":label=\"t('history.colCredits')\"")
+    expect(source).toContain(":label=\"t('history.colPower')\"")
     expect(source).toContain(":label=\"t('history.colStatus')\"")
 
     expect(source).not.toContain('label="Task ID"')
     expect(source).not.toContain('label="Type"')
     expect(source).not.toContain('label="Credits"')
     expect(source).not.toContain('label="Status"')
+  })
+
+  it('uses power i18n keys for generator metadata', () => {
+    const source = readViewSource('GeneratorView.vue')
+
+    expect(source).toContain('displayPower(task.powerCost, task.creditCost, task.providerId) > 0')
+    expect(source).toContain("t('generator.power'")
+    expect(source).not.toContain("t('generator.credits'")
   })
 
   it('uses i18n for generator upload failure feedback', () => {

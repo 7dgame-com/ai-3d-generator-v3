@@ -1,8 +1,10 @@
 import fc from 'fast-check'
+import { ref } from 'vue'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 const getCreditStatus = vi.fn()
 const can = vi.fn()
+const isRootUser = ref(false)
 
 vi.mock('../../api', () => ({
   getCreditStatus,
@@ -11,6 +13,7 @@ vi.mock('../../api', () => ({
 vi.mock('../usePermissions', () => ({
   usePermissions: () => ({
     can,
+    isRootUser,
   }),
 }))
 
@@ -19,31 +22,30 @@ describe('Feature: ai-3d-v3-i18n-credit-dialog, Property 1: Credit exhaustion de
     getCreditStatus.mockReset()
     can.mockReset()
     can.mockReturnValue(false)
+    isRootUser.value = false
   })
 
-  it('returns true iff every provider has no available credits', async () => {
+  it('returns true iff the global account has no available credits', async () => {
     const { isAllCreditsZero } = await import('../useCreditCheck')
 
     await fc.assert(
       fc.asyncProperty(
-        fc.array(
+        fc.option(
           fc.record({
-            provider_id: fc.string(),
             wallet_balance: fc.integer({ min: -1000, max: 1000 }),
             pool_balance: fc.integer({ min: -1000, max: 1000 }),
             pool_baseline: fc.integer({ min: -1000, max: 1000 }),
             cycles_remaining: fc.integer({ min: 0, max: 1000 }),
+            cycle_duration: fc.integer({ min: 0, max: 100000 }),
+            total_duration: fc.integer({ min: 0, max: 100000 }),
             cycle_started_at: fc.option(fc.string(), { nil: null }),
             next_cycle_at: fc.option(fc.string(), { nil: null }),
           }),
-          { maxLength: 20 }
+          { nil: null }
         ),
-        async (statuses) => {
-          const expected =
-            statuses.length > 0 &&
-            statuses.every((status) => status.wallet_balance + status.pool_balance <= 0)
-
-          expect(isAllCreditsZero(statuses)).toBe(expected)
+        async (status) => {
+          const expected = !!status && status.wallet_balance + status.pool_balance <= 0
+          expect(isAllCreditsZero(status)).toBe(expected)
         }
       ),
       { numRuns: 100 }
@@ -52,19 +54,19 @@ describe('Feature: ai-3d-v3-i18n-credit-dialog, Property 1: Credit exhaustion de
 
   it('opens the dialog after a successful zero-credit check and exposes admin status', async () => {
     can.mockImplementation((permission: string) => permission === 'admin-config')
+    isRootUser.value = true
     getCreditStatus.mockResolvedValue({
       data: {
-        data: [
-          {
-            provider_id: 'tripo3d',
-            wallet_balance: 0,
-            pool_balance: 0,
-            pool_baseline: 0,
-            cycles_remaining: 0,
-            cycle_started_at: null,
-            next_cycle_at: null,
-          },
-        ],
+        data: {
+          wallet_balance: 0,
+          pool_balance: 0,
+          pool_baseline: 0,
+          cycles_remaining: 0,
+          cycle_duration: 0,
+          total_duration: 0,
+          cycle_started_at: null,
+          next_cycle_at: null,
+        },
       },
     })
 
@@ -78,6 +80,16 @@ describe('Feature: ai-3d-v3-i18n-credit-dialog, Property 1: Credit exhaustion de
 
     expect(getCreditStatus).toHaveBeenCalledTimes(1)
     expect(creditCheck.showCreditDialog.value).toBe(true)
+  })
+
+  it('does not expose admin recharge affordances to non-root operators', async () => {
+    can.mockImplementation((permission: string) => permission === 'admin-config')
+    isRootUser.value = false
+
+    const { useCreditCheck } = await import('../useCreditCheck')
+    const creditCheck = useCreditCheck()
+
+    expect(creditCheck.isAdmin.value).toBe(false)
   })
 
   it('keeps the dialog hidden when the credit check API fails', async () => {
