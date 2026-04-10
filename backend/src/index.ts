@@ -10,7 +10,7 @@ import express, { Request, Response, NextFunction } from 'express';
 import cors from 'cors';
 import { testConnection } from './db/connection';
 import { startPoller } from './services/taskPoller';
-import { startScheduler, stopScheduler } from './services/quotaScheduler';
+import { startSiteScheduler, stopSiteScheduler } from './services/siteQuotaScheduler';
 import { startTimeoutGuardian, stopTimeoutGuardian } from './services/timeoutGuardian';
 import { parseEnabledProviders } from './config/providers';
 import { providerRegistry } from './adapters/ProviderRegistry';
@@ -69,14 +69,14 @@ app.use((err: Error & { status?: number }, _req: Request, res: Response, _next: 
 
 // ========== 启动服务器 ==========
 app.listen(PORT, async () => {
-    console.log(`[AI 3D Generator] API 服务已启动，端口: ${PORT}`);
-    try {
-      await testConnection();
+  console.log(`[AI 3D Generator] API 服务已启动，端口: ${PORT}`);
+  try {
+    await testConnection();
 
-      // ========== 注册启用的 Provider 适配器 ==========
-      const enabledProviders = parseEnabledProviders();
-      const adapterMap: Record<string, typeof tripo3dAdapter | typeof hyper3dAdapter> = {
-        tripo3d: tripo3dAdapter,
+    // ========== 注册启用的 Provider 适配器 ==========
+    const enabledProviders = parseEnabledProviders();
+    const adapterMap: Record<string, typeof tripo3dAdapter | typeof hyper3dAdapter> = {
+      tripo3d: tripo3dAdapter,
       hyper3d: hyper3dAdapter,
     };
     for (const providerId of enabledProviders) {
@@ -84,15 +84,15 @@ app.listen(PORT, async () => {
       if (adapter) {
         providerRegistry.register(adapter);
         console.log(`[Server] 已注册 Provider 适配器: ${providerId}`);
-        }
       }
+    }
 
-      await startPoller();
-      await startScheduler();
-      startTimeoutGuardian();
-    } catch (err) {
-      console.error('[Server] 关键服务启动失败，退出:', (err as Error).message);
-      process.exit(1);
+    await startPoller();
+    await startSiteScheduler();
+    startTimeoutGuardian();
+  } catch (err) {
+    console.error('[Server] 关键服务启动失败，退出:', (err as Error).message);
+    process.exit(1);
   }
 });
 
@@ -100,13 +100,13 @@ app.listen(PORT, async () => {
 process.on('SIGTERM', () => {
   console.log('[Server] 收到 SIGTERM，正在关闭...');
   stopTimeoutGuardian();
-  stopScheduler();
+  stopSiteScheduler();
   process.exit(0);
 });
 
 process.on('SIGINT', () => {
   console.log('[Server] 收到 SIGINT，正在关闭...');
   stopTimeoutGuardian();
-  stopScheduler();
+  stopSiteScheduler();
   process.exit(0);
 });
