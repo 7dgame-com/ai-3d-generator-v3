@@ -22,4 +22,16 @@ describe('AdminView visual refresh structure', () => {
     expect(source).toContain("t('admin.previewDockTitle')")
     expect(source).not.toContain('class="compat-preview"')
   })
+
+  it('defines the approved industrial tokens and responsive stacking rules', () => {
+    expect(source).toContain('--console-bg')
+    expect(source).toContain('--pond-a')
+    expect(source).toContain('--wallet-a')
+    expect(source).toContain('.quota-status-pill')
+    expect(source).toContain('.pond-chamber__tank')
+    expect(source).toContain('.compat-console__preview')
+    expect(source).toContain('class="compat-recharge-dialog"')
+    expect(source).toContain('.compat-recharge-dialog .el-dialog__header')
+    expect(source).toContain('@media (max-width: 960px)')
+  })
 })
