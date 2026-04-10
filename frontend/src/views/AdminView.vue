@@ -96,76 +96,73 @@
         <el-button :loading="quotaLoading" @click="loadQuotaStatus">{{ t('admin.loadQuota') }}</el-button>
       </div>
 
-      <div v-if="quotaStatus" class="quota-visual-grid">
-        <article class="quota-card">
-          <div class="quota-card__head">
-            <div>
-              <h4>{{ t('admin.totalPowerCard') }}</h4>
-              <p>{{ t('admin.powerValue', { value: totalQuota }) }}</p>
-            </div>
-            <el-tag type="info">{{ t('admin.statusLabel') }}</el-tag>
+      <div v-if="quotaStatus" class="quota-console">
+        <div class="quota-console__head">
+          <div>
+            <h4>{{ t('admin.quotaOverviewTitle') }}</h4>
+            <p>{{ t('admin.quotaOverviewHint') }}</p>
           </div>
+          <span class="quota-status-pill" :data-tone="quotaStatusTone">{{ quotaStatusLabel }}</span>
+        </div>
 
-          <div class="quota-visuals">
-            <div class="pond-widget">
-              <span class="widget-label">{{ t('admin.poolLevel') }}</span>
-              <div class="pond-shell">
-                <div class="pond-fill" :style="poolFillStyle(quotaStatus)">
-                  <span class="pond-fill__glow"></span>
-                </div>
-                <div class="pond-overlay">
-                  <strong>{{ formatPower(quotaStatus.pool_balance) }}</strong>
-                  <small>{{ t('admin.poolBaseline') }} {{ formatPower(quotaStatus.pool_baseline) }}</small>
-                </div>
+        <div class="quota-kpi-strip">
+          <article v-for="item in quotaKpis" :key="item.key" class="quota-kpi">
+            <span>{{ item.label }}</span>
+            <strong>{{ item.value }}</strong>
+          </article>
+        </div>
+
+        <div class="quota-console__grid">
+          <section class="pond-chamber">
+            <span class="section-label">{{ t('admin.pondChamberTitle') }}</span>
+            <div class="pond-chamber__tank">
+              <div class="pond-chamber__fill" :style="poolFillStyle(quotaStatus)">
+                <span class="pond-chamber__glow"></span>
+              </div>
+              <div class="pond-chamber__overlay">
+                <strong>{{ formatPower(quotaStatus.pool_balance) }}</strong>
+                <small>{{ t('admin.poolBaseline') }} {{ formatPower(quotaStatus.pool_baseline) }}</small>
               </div>
             </div>
+          </section>
 
-            <div class="wallet-widget">
-              <span class="widget-label">{{ t('admin.walletReserve') }}</span>
-              <div class="wallet-meter">
-                <div class="wallet-meter__track">
-                  <div class="wallet-meter__fill" :style="walletFillStyle(quotaStatus)"></div>
-                </div>
-                <strong>{{ formatPower(quotaStatus.wallet_balance) }}</strong>
+          <section class="wallet-cockpit">
+            <span class="section-label">{{ t('admin.walletScheduleTitle') }}</span>
+            <div class="wallet-cockpit__reserve">
+              <div class="wallet-cockpit__track">
+                <div class="wallet-cockpit__fill" :style="walletFillStyle(quotaStatus)"></div>
               </div>
+              <strong>{{ formatPower(quotaStatus.wallet_balance) }}</strong>
             </div>
-          </div>
 
-          <dl class="status-list">
-            <div>
-              <dt>{{ t('admin.walletBalance') }}</dt>
-              <dd>{{ formatPower(quotaStatus.wallet_balance) }}</dd>
-            </div>
-            <div>
-              <dt>{{ t('admin.poolBalance') }}</dt>
-              <dd>{{ formatPower(quotaStatus.pool_balance) }}</dd>
-            </div>
-            <div>
-              <dt>{{ t('admin.poolBaseline') }}</dt>
-              <dd>{{ formatPower(quotaStatus.pool_baseline) }}</dd>
-            </div>
-            <div>
-              <dt>{{ t('admin.cyclesRemaining') }}</dt>
-              <dd>{{ quotaStatus.cycles_remaining }}</dd>
-            </div>
-            <div>
-              <dt>{{ t('admin.cycleDuration') }}</dt>
-              <dd>{{ quotaStatus.cycle_duration }}</dd>
-            </div>
-            <div>
-              <dt>{{ t('admin.totalDuration') }}</dt>
-              <dd>{{ quotaStatus.total_duration }}</dd>
-            </div>
-            <div>
-              <dt>{{ t('admin.cycleStartedAt') }}</dt>
-              <dd>{{ formatDateTime(quotaStatus.cycle_started_at) }}</dd>
-            </div>
-            <div>
-              <dt>{{ t('admin.nextCycleAt') }}</dt>
-              <dd>{{ formatDateTime(quotaStatus.next_cycle_at) }}</dd>
-            </div>
-          </dl>
-        </article>
+            <dl class="wallet-cockpit__metrics">
+              <div>
+                <dt>{{ t('admin.poolBaseline') }}</dt>
+                <dd>{{ formatPower(quotaStatus.pool_baseline) }}</dd>
+              </div>
+              <div>
+                <dt>{{ t('admin.cyclesRemaining') }}</dt>
+                <dd>{{ quotaStatus.cycles_remaining }}</dd>
+              </div>
+              <div>
+                <dt>{{ t('admin.cycleStartedAt') }}</dt>
+                <dd>{{ formatDateTime(quotaStatus.cycle_started_at) }}</dd>
+              </div>
+              <div>
+                <dt>{{ t('admin.nextCycleAt') }}</dt>
+                <dd>{{ formatDateTime(quotaStatus.next_cycle_at) }}</dd>
+              </div>
+              <div>
+                <dt>{{ t('admin.totalDuration') }}</dt>
+                <dd>{{ quotaStatus.total_duration }}</dd>
+              </div>
+              <div>
+                <dt>{{ t('admin.cycleDuration') }}</dt>
+                <dd>{{ quotaStatus.cycle_duration }}</dd>
+              </div>
+            </dl>
+          </section>
+        </div>
       </div>
       <el-empty
         v-else
@@ -214,83 +211,90 @@
     <el-dialog
       v-model="showCompatRechargeModal"
       :title="t('admin.rechargeTitle')"
-      width="520px"
+      width="760px"
     >
-      <p class="panel-hint">{{ t('admin.rechargeHint') }}</p>
+      <div class="compat-console">
+        <section class="compat-console__form">
+          <p class="panel-hint">{{ t('admin.rechargeHint') }}</p>
 
-      <div class="compat-grid">
-        <label class="field field--wide">
-          <span>{{ t('admin.compatTotalPower') }}</span>
-          <el-input-number
-            v-model="compatRechargeForm.totalPower"
-            :min="0"
-            :precision="2"
-            :step="10"
-          />
-        </label>
-        <label class="field">
-          <span>{{ t('admin.compatWalletPercent') }}</span>
-          <el-input-number
-            v-model="compatRechargeForm.walletPercent"
-            :min="0"
-            :max="100"
-            :precision="0"
-          />
-        </label>
-        <label class="field">
-          <span>{{ t('admin.compatPoolPercent') }}</span>
-          <el-input-number
-            v-model="compatRechargeForm.poolPercent"
-            :min="0"
-            :max="100"
-            :precision="0"
-          />
-        </label>
-        <label class="field">
-          <span>{{ t('admin.compatTotalDays') }}</span>
-          <el-input-number
-            v-model="compatRechargeForm.totalDays"
-            :min="0"
-            :precision="0"
-          />
-        </label>
-        <label class="field">
-          <span>{{ t('admin.compatTotalHours') }}</span>
-          <el-input-number
-            v-model="compatRechargeForm.totalHours"
-            :min="0"
-            :max="23"
-            :precision="0"
-          />
-        </label>
-        <label class="field field--wide">
-          <span>{{ t('admin.compatCycleHours') }}</span>
-          <el-input-number
-            v-model="compatRechargeForm.cycleHours"
-            :min="1"
-            :precision="0"
-          />
-        </label>
+          <div class="compat-grid">
+            <label class="field field--wide">
+              <span>{{ t('admin.compatTotalPower') }}</span>
+              <el-input-number
+                v-model="compatRechargeForm.totalPower"
+                :min="0"
+                :precision="2"
+                :step="10"
+              />
+            </label>
+            <label class="field">
+              <span>{{ t('admin.compatWalletPercent') }}</span>
+              <el-input-number
+                v-model="compatRechargeForm.walletPercent"
+                :min="0"
+                :max="100"
+                :precision="0"
+              />
+            </label>
+            <label class="field">
+              <span>{{ t('admin.compatPoolPercent') }}</span>
+              <el-input-number
+                v-model="compatRechargeForm.poolPercent"
+                :min="0"
+                :max="100"
+                :precision="0"
+              />
+            </label>
+            <label class="field">
+              <span>{{ t('admin.compatTotalDays') }}</span>
+              <el-input-number
+                v-model="compatRechargeForm.totalDays"
+                :min="0"
+                :precision="0"
+              />
+            </label>
+            <label class="field">
+              <span>{{ t('admin.compatTotalHours') }}</span>
+              <el-input-number
+                v-model="compatRechargeForm.totalHours"
+                :min="0"
+                :max="23"
+                :precision="0"
+              />
+            </label>
+            <label class="field field--wide">
+              <span>{{ t('admin.compatCycleHours') }}</span>
+              <el-input-number
+                v-model="compatRechargeForm.cycleHours"
+                :min="1"
+                :precision="0"
+              />
+            </label>
+          </div>
+        </section>
+
+        <aside class="compat-console__preview">
+          <h4>{{ t('admin.previewDockTitle') }}</h4>
+          <div class="compat-console__preview-grid">
+            <div class="preview-card">
+              <span>{{ t('admin.compatPreviewWallet') }}</span>
+              <strong>{{ formatPower(compatRechargePreview.walletAmount) }}</strong>
+            </div>
+            <div class="preview-card">
+              <span>{{ t('admin.compatPreviewPool') }}</span>
+              <strong>{{ formatPower(compatRechargePreview.poolAmount) }}</strong>
+            </div>
+            <div class="preview-card">
+              <span>{{ t('admin.compatPreviewTotalHours') }}</span>
+              <strong>{{ compatRechargePreview.totalHours }}h</strong>
+            </div>
+            <div class="preview-card">
+              <span>{{ t('admin.compatPreviewCycleHours') }}</span>
+              <strong>{{ compatRechargeForm.cycleHours }}h</strong>
+            </div>
+          </div>
+        </aside>
       </div>
-
-      <dl class="status-list compat-preview">
-        <div>
-          <dt>{{ t('admin.compatPreviewWallet') }}</dt>
-          <dd>{{ formatPower(compatRechargePreview.walletAmount) }}</dd>
-        </div>
-        <div>
-          <dt>{{ t('admin.compatPreviewPool') }}</dt>
-          <dd>{{ formatPower(compatRechargePreview.poolAmount) }}</dd>
-        </div>
-        <div>
-          <dt>{{ t('admin.compatPreviewTotalHours') }}</dt>
-          <dd>{{ compatRechargePreview.totalHours }}h</dd>
-        </div>
-        <div>
-          <dt>{{ t('admin.compatPreviewCycleHours') }}</dt>
-          <dd>{{ compatRechargeForm.cycleHours }}h</dd>
-        </div>
-      </dl>
 
       <template #footer>
         <div class="dialog-actions">

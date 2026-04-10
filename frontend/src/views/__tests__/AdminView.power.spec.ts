@@ -54,4 +54,11 @@ describe('AdminView power wiring', () => {
     expect(source).toContain('quotaKpis')
     expect(source).toContain('cyclesRemaining')
   })
+
+  it('wires the quota cockpit to the derived KPI and status helpers', () => {
+    expect(source).toContain('quotaKpis')
+    expect(source).toContain('quotaStatusLabel')
+    expect(source).toContain('quotaStatusTone')
+    expect(source).toContain('formatDateTime(quotaStatus.cycle_started_at)')
+  })
 })
