@@ -23,11 +23,14 @@ jest.mock('../services/crypto', () => ({
 }));
 
 jest.mock('../services/creditManager', () => ({
-  creditManager: {
-    preDeduct: (...args: unknown[]) => mockPreDeduct(...args),
-  },
   computeThrottleDelay: (...args: unknown[]) => mockComputeThrottleDelay(...args),
   sleep: (...args: unknown[]) => mockSleep(...args),
+}));
+
+jest.mock('../services/sitePowerManager', () => ({
+  sitePowerManager: {
+    preDeduct: (...args: unknown[]) => mockPreDeduct(...args),
+  },
 }));
 
 jest.mock('../services/prepareToken', () => ({
@@ -126,8 +129,8 @@ describe('directTask.prepareTask', () => {
       })
     );
     expect(lockedConn.query).toHaveBeenCalledWith(
-      expect.stringContaining('FROM power_accounts'),
-      [7]
+      expect.stringContaining('FROM site_power_accounts'),
+      []
     );
   });
 

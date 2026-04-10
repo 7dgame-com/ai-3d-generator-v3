@@ -1,7 +1,7 @@
 import { query } from '../db/connection';
 import { creditToPower, getEstimatedCreditCost } from '../config/providers';
 import { decrypt } from './crypto';
-import { creditManager } from './creditManager';
+import { sitePowerManager } from './sitePowerManager';
 import { providerRegistry } from '../adapters/ProviderRegistry';
 import { computeExpiresAt } from '../utils/urlExpiry';
 
@@ -81,7 +81,7 @@ async function markTaskFailed(taskId: string, errorMessage: string): Promise<voi
   }
 
   try {
-    await creditManager.refund(taskContext.user_id, taskContext.provider_id, taskId);
+    await sitePowerManager.refund(taskContext.provider_id, taskId);
   } catch (error) {
     console.error(`[TaskPoller] refund failed for ${taskId}:`, (error as Error).message);
   }
@@ -100,7 +100,7 @@ async function markTaskTimeout(taskId: string): Promise<void> {
   }
 
   try {
-    await creditManager.refund(taskContext.user_id, taskContext.provider_id, taskId);
+    await sitePowerManager.refund(taskContext.provider_id, taskId);
   } catch (error) {
     console.error(`[TaskPoller] timeout refund failed for ${taskId}:`, (error as Error).message);
   }
@@ -108,7 +108,6 @@ async function markTaskTimeout(taskId: string): Promise<void> {
 
 async function handleSuccess(
   taskId: string,
-  userId: number,
   providerId: string,
   outputUrl: string,
   creditCost: number,
@@ -131,8 +130,7 @@ async function handleSuccess(
     await query('UPDATE tasks SET file_size = ? WHERE task_id = ?', [fileSize, taskId]);
   }
 
-  const result = await creditManager.finalizeTaskSuccess(
-    userId,
+  const result = await sitePowerManager.finalizeTaskSuccess(
     providerId,
     taskId,
     outputUrl,
@@ -155,7 +153,6 @@ async function handleSuccess(
 
 function retryTaskSuccessFinalization(
   taskId: string,
-  userId: number,
   providerId: string,
   outputUrl: string,
   creditCost: number,
@@ -166,14 +163,14 @@ function retryTaskSuccessFinalization(
       return;
     }
     try {
-      await handleSuccess(taskId, userId, providerId, outputUrl, creditCost, thumbnailUrl);
+      await handleSuccess(taskId, providerId, outputUrl, creditCost, thumbnailUrl);
       activePollers.delete(taskId);
     } catch (error) {
       console.error(
         `[TaskPoller] retry success finalization failed for ${taskId}:`,
         (error as Error).message
       );
-      retryTaskSuccessFinalization(taskId, userId, providerId, outputUrl, creditCost, thumbnailUrl);
+      retryTaskSuccessFinalization(taskId, providerId, outputUrl, creditCost, thumbnailUrl);
     }
   }, POLL_INTERVAL_MS);
 }
@@ -197,7 +194,7 @@ async function pollTask(taskId: string, startTime: number, failureCount: number)
     return;
   }
 
-  const { user_id: userId, provider_id: providerId, provider_status_key: providerStatusKey } = taskContext;
+  const { provider_id: providerId, provider_status_key: providerStatusKey } = taskContext;
   const effectiveStatusKey = normalizeProviderStatusKey(providerStatusKey, taskId);
   const adapter = providerRegistry.get(providerId);
   if (!adapter) {
@@ -233,7 +230,6 @@ async function pollTask(taskId: string, startTime: number, failureCount: number)
       try {
         await handleSuccess(
           taskId,
-          userId,
           providerId,
           status.outputUrl,
           actualCost,
@@ -245,7 +241,6 @@ async function pollTask(taskId: string, startTime: number, failureCount: number)
         console.error(`[TaskPoller] success finalization failed for ${taskId}:`, (error as Error).message);
         retryTaskSuccessFinalization(
           taskId,
-          userId,
           providerId,
           status.outputUrl,
           actualCost,

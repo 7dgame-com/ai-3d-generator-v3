@@ -4,7 +4,9 @@ import { creditToPower, getEstimatedCreditCost } from '../config/providers';
 import { decrypt } from '../services/crypto';
 import { addTaskToPoller } from '../services/taskPoller';
 import { AuthenticatedRequest } from '../middleware/auth';
-import { creditManager, computeThrottleDelay, sleep, DeductResult } from '../services/creditManager';
+import { computeThrottleDelay, sleep } from '../services/creditManager';
+import { type DeductResult } from '../services/powerManager';
+import { sitePowerManager } from '../services/sitePowerManager';
 import { providerRegistry } from '../adapters/ProviderRegistry';
 import { computeExpiresAt, isDownloadExpired } from '../utils/urlExpiry';
 import { normalizeTaskBilling } from '../utils/taskBilling';
@@ -99,16 +101,16 @@ async function getMaxThrottleDelayMs(): Promise<number> {
   return Number.isFinite(parsed) && parsed >= 0 ? parsed : DEFAULT_MAX_THROTTLE_DELAY_MS;
 }
 
-async function getLockedAccountSnapshot(userId: number): Promise<AccountSnapshot | null> {
+async function getLockedSiteAccountSnapshot(): Promise<AccountSnapshot | null> {
   const conn = await pool.getConnection();
   try {
     await conn.beginTransaction();
     const [rows] = await conn.query<any[]>(
       `SELECT wallet_balance, pool_balance, pool_baseline, next_cycle_at
-       FROM power_accounts
-       WHERE user_id = ?
+       FROM site_power_accounts
+       WHERE id = 1
        FOR UPDATE`,
-      [userId]
+      []
     );
     await conn.commit();
     return rows?.[0] ?? null;
@@ -163,7 +165,7 @@ export async function createTask(req: Request, res: Response): Promise<void> {
   // Step 1: Lock account snapshot and evaluate throttle/available balance
   let accountSnapshot: AccountSnapshot | null;
   try {
-    accountSnapshot = await getLockedAccountSnapshot(userId);
+    accountSnapshot = await getLockedSiteAccountSnapshot();
   } catch (err) {
     console.error('[TaskController] 读取额度账户失败:', err);
     res.status(500).json({ code: 5001, message: '服务器内部错误' });
@@ -210,7 +212,7 @@ export async function createTask(req: Request, res: Response): Promise<void> {
   // Use a temp taskId for pre-deduction; will be updated after provider returns real task_id
   const tempTaskId = `temp:${userId}:${Date.now()}`;
   try {
-    preDeductResult = await creditManager.preDeduct(userId, providerId, estimatedPower, tempTaskId);
+    preDeductResult = await sitePowerManager.preDeduct(providerId, estimatedPower, tempTaskId);
     if (!preDeductResult.success) {
       if (preDeductResult.errorCode === 'INSUFFICIENT_CREDITS') {
         res.status(422).json({ code: 'INSUFFICIENT_CREDITS', message: '额度不足' });
@@ -242,7 +244,7 @@ export async function createTask(req: Request, res: Response): Promise<void> {
       console.error('[TaskController] DB insert error:', err);
       if (preDeductResult?.success) {
         try {
-          await creditManager.refund(userId, providerId, tempTaskId);
+          await sitePowerManager.refund(providerId, tempTaskId);
         } catch (refundErr) {
           console.error('[TaskController] DB insert 失败后的退款失败:', (refundErr as Error).message);
         }
@@ -254,7 +256,7 @@ export async function createTask(req: Request, res: Response): Promise<void> {
     // Provider call failed — refund the pre-deduction if it was made
     if (preDeductResult?.success) {
       try {
-        await creditManager.refund(userId, providerId, tempTaskId);
+        await sitePowerManager.refund(providerId, tempTaskId);
       } catch (refundErr) {
         console.error('[TaskController] 退款失败 (tempTaskId):', (refundErr as Error).message);
       }
@@ -268,8 +270,8 @@ export async function createTask(req: Request, res: Response): Promise<void> {
   if (preDeductResult?.success) {
     try {
       await query(
-        "UPDATE credit_ledger SET task_id = ? WHERE task_id = ? AND user_id = ? AND event_type = 'pre_deduct'",
-        [providerTaskId, tempTaskId, userId]
+        "UPDATE site_power_ledger SET task_id = ? WHERE task_id = ? AND provider_id = ? AND event_type = 'pre_deduct'",
+        [providerTaskId, tempTaskId, providerId]
       );
     } catch (err) {
       console.error('[TaskController] 更新 ledger task_id 失败:', (err as Error).message);

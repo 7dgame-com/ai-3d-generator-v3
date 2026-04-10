@@ -3,7 +3,9 @@ import { pool, query } from '../db/connection';
 import { creditToPower, getEstimatedCreditCost } from '../config/providers';
 import { decrypt } from '../services/crypto';
 import { AuthenticatedRequest } from '../middleware/auth';
-import { creditManager, computeThrottleDelay, sleep, type DeductResult } from '../services/creditManager';
+import { computeThrottleDelay, sleep } from '../services/creditManager';
+import { type DeductResult } from '../services/powerManager';
+import { sitePowerManager } from '../services/sitePowerManager';
 import { providerRegistry } from '../adapters/ProviderRegistry';
 import { addTaskToPoller } from '../services/taskPoller';
 import {
@@ -89,17 +91,17 @@ async function getApiMode(): Promise<'direct' | 'proxy'> {
   return rows?.[0]?.value === 'proxy' ? 'proxy' : 'direct';
 }
 
-async function getLockedAccountSnapshot(userId: number): Promise<AccountSnapshot | null> {
+async function getLockedSiteAccountSnapshot(): Promise<AccountSnapshot | null> {
   const conn = await pool.getConnection();
 
   try {
     await conn.beginTransaction();
     const [rows] = await conn.query<any[]>(
       `SELECT wallet_balance, pool_balance, pool_baseline, next_cycle_at
-       FROM power_accounts
-       WHERE user_id = ?
+       FROM site_power_accounts
+       WHERE id = 1
        FOR UPDATE`,
-      [userId]
+      []
     );
     await conn.commit();
     return rows?.[0] ?? null;
@@ -263,7 +265,7 @@ export async function prepareTask(req: Request, res: Response): Promise<void> {
 
   let accountSnapshot: AccountSnapshot | null;
   try {
-    accountSnapshot = await getLockedAccountSnapshot(userId);
+    accountSnapshot = await getLockedSiteAccountSnapshot();
   } catch (error) {
     console.error('[DirectTaskController] 读取额度账户失败:', error);
     res.status(500).json({ code: 5001, message: '服务器内部错误' });
@@ -311,7 +313,7 @@ export async function prepareTask(req: Request, res: Response): Promise<void> {
 
   let preDeductResult: DeductResult;
   try {
-    preDeductResult = await creditManager.preDeduct(userId, providerId, estimatedPower, tempTaskId);
+    preDeductResult = await sitePowerManager.preDeduct(providerId, estimatedPower, tempTaskId);
   } catch (error) {
     console.error('[DirectTaskController] 预扣额度失败:', error);
     res.status(500).json({ code: 5001, message: '服务器内部错误' });
@@ -388,8 +390,8 @@ export async function registerTask(req: Request, res: Response): Promise<void> {
     );
 
     const updateResult = await query<{ affectedRows?: number }>(
-      "UPDATE credit_ledger SET task_id = ? WHERE task_id = ? AND user_id = ? AND provider_id = ? AND event_type = 'pre_deduct'",
-      [taskId, tokenPayload.tempTaskId, userId, tokenPayload.providerId]
+      "UPDATE site_power_ledger SET task_id = ? WHERE task_id = ? AND provider_id = ? AND event_type = 'pre_deduct'",
+      [taskId, tokenPayload.tempTaskId, tokenPayload.providerId]
     );
 
     if ((updateResult as { affectedRows?: number })?.affectedRows === 0) {
@@ -462,8 +464,7 @@ export async function completeTask(req: Request, res: Response): Promise<void> {
     const completedAt = new Date();
     const resolvedBilling = await resolveCompletionBilling(task, outputUrl, thumbnailUrl);
     const powerCost = creditToPower(task.provider_id, resolvedBilling.creditCost);
-    const result = await creditManager.finalizeTaskSuccess(
-      userId,
+    const result = await sitePowerManager.finalizeTaskSuccess(
       task.provider_id,
       taskId,
       resolvedBilling.outputUrl,
@@ -532,7 +533,7 @@ export async function failTask(req: Request, res: Response): Promise<void> {
   }
 
   try {
-    await creditManager.refund(userId, task.provider_id, taskId);
+    await sitePowerManager.refund(task.provider_id, taskId);
     await query(
       "UPDATE tasks SET status = 'failed', error_message = ?, completed_at = NOW() WHERE task_id = ?",
       [errorMessage ?? '任务生成失败', taskId]

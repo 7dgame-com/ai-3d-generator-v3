@@ -7,7 +7,6 @@ const mockPoolGetConnection = jest.fn();
 const mockDecrypt = jest.fn();
 const mockAddTaskToPoller = jest.fn();
 const mockPreDeduct = jest.fn();
-const mockRefund = jest.fn();
 const mockSleep = jest.fn();
 const mockComputeThrottleDelay = jest.fn();
 const mockProviderCreateTask = jest.fn();
@@ -29,12 +28,14 @@ jest.mock('../services/taskPoller', () => ({
 }));
 
 jest.mock('../services/creditManager', () => ({
-  creditManager: {
-    preDeduct: (...args: unknown[]) => mockPreDeduct(...args),
-    refund: (...args: unknown[]) => mockRefund(...args),
-  },
   computeThrottleDelay: (...args: unknown[]) => mockComputeThrottleDelay(...args),
   sleep: (...args: unknown[]) => mockSleep(...args),
+}));
+
+jest.mock('../services/sitePowerManager', () => ({
+  sitePowerManager: {
+    preDeduct: (...args: unknown[]) => mockPreDeduct(...args),
+  },
 }));
 
 jest.mock('../adapters/ProviderRegistry', () => ({
@@ -204,14 +205,13 @@ describe('task controller power fields', () => {
     await createTask(req, res);
 
     expect(mockPreDeduct).toHaveBeenCalledWith(
-      1,
       'hyper3d',
       creditToPower('hyper3d', 0.5),
       expect.stringMatching(/^temp:1:/)
     );
     expect(lockedConn.query).toHaveBeenCalledWith(
-      expect.stringContaining('FROM power_accounts'),
-      [1]
+      expect.stringContaining('FROM site_power_accounts'),
+      []
     );
   });
 });
