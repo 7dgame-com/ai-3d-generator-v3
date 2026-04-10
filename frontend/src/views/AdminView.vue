@@ -27,6 +27,9 @@
           <h3>{{ t('admin.providerOpsTitle') }}</h3>
           <p class="panel-hint">{{ t('admin.providerOpsHint') }}</p>
         </div>
+        <el-button type="primary" @click="openCompatRechargeModal">
+          {{ t('admin.compatRechargeAction') }}
+        </el-button>
       </div>
 
       <div class="provider-grid">
@@ -91,19 +94,6 @@
           <p class="panel-hint">{{ t('admin.quotaOverviewHint') }}</p>
         </div>
         <el-button :loading="quotaLoading" @click="loadQuotaStatus">{{ t('admin.loadQuota') }}</el-button>
-      </div>
-
-      <div class="quota-toolbar">
-        <label class="field field--wide">
-          <span>{{ t('admin.userId') }}</span>
-          <el-input-number
-            v-model="targetUserId"
-            :min="1"
-            :precision="0"
-            :step="1"
-            controls-position="right"
-          />
-        </label>
       </div>
 
       <div v-if="quotaStatus" class="quota-visual-grid">
@@ -179,53 +169,8 @@
       </div>
       <el-empty
         v-else
-        :description="targetUserId ? t('admin.noQuotaData') : t('admin.quotaEmpty')"
+        :description="t('admin.quotaEmpty')"
       />
-    </section>
-
-    <section class="panel">
-      <div class="panel-head">
-        <div>
-          <h3>{{ t('admin.rechargeTitle') }}</h3>
-          <p class="panel-hint">{{ t('admin.rechargeHint') }}</p>
-        </div>
-      </div>
-
-      <div class="recharge-grid">
-        <label class="field">
-          <span>{{ t('admin.walletAmount') }}</span>
-          <el-input-number v-model="rechargeForm.wallet_amount" :min="1" :precision="2" :step="10" />
-        </label>
-        <label class="field">
-          <span>{{ t('admin.poolAmount') }}</span>
-          <el-input-number v-model="rechargeForm.pool_amount" :min="0" :precision="2" :step="10" />
-        </label>
-        <label class="field">
-          <span>{{ t('admin.totalDuration') }}</span>
-          <el-input-number
-            v-model="rechargeForm.total_duration"
-            :min="rechargeForm.cycle_duration"
-            :precision="0"
-            :step="60"
-          />
-        </label>
-        <label class="field">
-          <span>{{ t('admin.cycleDuration') }}</span>
-          <el-input-number
-            v-model="rechargeForm.cycle_duration"
-            :min="60"
-            :max="43200"
-            :precision="0"
-            :step="60"
-          />
-        </label>
-      </div>
-
-      <div class="actions">
-        <el-button type="primary" :loading="rechargeLoading" @click="submitRecharge">
-          {{ t('admin.recharge') }}
-        </el-button>
-      </div>
     </section>
 
     <section class="panel">
@@ -265,6 +210,101 @@
         </div>
       </div>
     </section>
+
+    <el-dialog
+      v-model="showCompatRechargeModal"
+      :title="t('admin.rechargeTitle')"
+      width="520px"
+    >
+      <p class="panel-hint">{{ t('admin.rechargeHint') }}</p>
+
+      <div class="compat-grid">
+        <label class="field field--wide">
+          <span>{{ t('admin.compatTotalPower') }}</span>
+          <el-input-number
+            v-model="compatRechargeForm.totalPower"
+            :min="0"
+            :precision="2"
+            :step="10"
+          />
+        </label>
+        <label class="field">
+          <span>{{ t('admin.compatWalletPercent') }}</span>
+          <el-input-number
+            v-model="compatRechargeForm.walletPercent"
+            :min="0"
+            :max="100"
+            :precision="0"
+          />
+        </label>
+        <label class="field">
+          <span>{{ t('admin.compatPoolPercent') }}</span>
+          <el-input-number
+            v-model="compatRechargeForm.poolPercent"
+            :min="0"
+            :max="100"
+            :precision="0"
+          />
+        </label>
+        <label class="field">
+          <span>{{ t('admin.compatTotalDays') }}</span>
+          <el-input-number
+            v-model="compatRechargeForm.totalDays"
+            :min="0"
+            :precision="0"
+          />
+        </label>
+        <label class="field">
+          <span>{{ t('admin.compatTotalHours') }}</span>
+          <el-input-number
+            v-model="compatRechargeForm.totalHours"
+            :min="0"
+            :max="23"
+            :precision="0"
+          />
+        </label>
+        <label class="field field--wide">
+          <span>{{ t('admin.compatCycleHours') }}</span>
+          <el-input-number
+            v-model="compatRechargeForm.cycleHours"
+            :min="1"
+            :precision="0"
+          />
+        </label>
+      </div>
+
+      <dl class="status-list compat-preview">
+        <div>
+          <dt>{{ t('admin.compatPreviewWallet') }}</dt>
+          <dd>{{ formatPower(compatRechargePreview.walletAmount) }}</dd>
+        </div>
+        <div>
+          <dt>{{ t('admin.compatPreviewPool') }}</dt>
+          <dd>{{ formatPower(compatRechargePreview.poolAmount) }}</dd>
+        </div>
+        <div>
+          <dt>{{ t('admin.compatPreviewTotalHours') }}</dt>
+          <dd>{{ compatRechargePreview.totalHours }}h</dd>
+        </div>
+        <div>
+          <dt>{{ t('admin.compatPreviewCycleHours') }}</dt>
+          <dd>{{ compatRechargeForm.cycleHours }}h</dd>
+        </div>
+      </dl>
+
+      <template #footer>
+        <div class="dialog-actions">
+          <el-button @click="showCompatRechargeModal = false">{{ t('common.cancel') }}</el-button>
+          <el-button
+            type="primary"
+            :loading="compatRechargeLoading"
+            @click="submitCompatRecharge"
+          >
+            {{ t('admin.recharge') }}
+          </el-button>
+        </div>
+      </template>
+    </el-dialog>
   </div>
 </template>
 
@@ -274,10 +314,10 @@ import { ElMessage } from 'element-plus'
 import {
   getAdminBalance,
   getAdminConfig,
-  getAdminCreditStatus,
   getAdminUsage,
   getEnabledProviders,
-  rechargeAdminCredits,
+  getSitePowerStatus,
+  rechargeSitePower,
   saveAdminConfig,
   type PowerAccountStatus,
 } from '../api'
@@ -297,15 +337,17 @@ const balances = reactive<Record<string, { available?: number; availablePower?: 
 const draftKeys = reactive<Record<string, string>>({})
 const adminUsage = ref<AdminUsageSnapshot | null>(null)
 
-const targetUserId = ref<number | undefined>()
 const quotaStatus = ref<PowerAccountStatus | null>(null)
 const quotaLoading = ref(false)
-const rechargeLoading = ref(false)
-const rechargeForm = reactive({
-  wallet_amount: 300,
-  pool_amount: 100,
-  total_duration: 43200,
-  cycle_duration: 1440,
+const showCompatRechargeModal = ref(false)
+const compatRechargeLoading = ref(false)
+const compatRechargeForm = reactive({
+  totalPower: 0,
+  walletPercent: 50,
+  poolPercent: 50,
+  totalDays: 7,
+  totalHours: 0,
+  cycleHours: 24,
 })
 
 const totalWallet = computed(() => quotaStatus.value?.wallet_balance ?? 0)
@@ -318,6 +360,23 @@ const maxTrendPower = computed(() =>
 )
 const rankedUsers = computed(() => adminUsage.value?.userRanking ?? [])
 const trendRows = computed(() => adminUsage.value?.dailyTrend ?? [])
+const compatRechargePreview = computed(() => {
+  const totalHours = compatRechargeForm.totalDays * 24 + compatRechargeForm.totalHours
+  const walletAmount = Number(
+    (compatRechargeForm.totalPower * compatRechargeForm.walletPercent / 100).toFixed(2)
+  )
+  const poolAmount = Number(
+    (compatRechargeForm.totalPower * compatRechargeForm.poolPercent / 100).toFixed(2)
+  )
+
+  return {
+    walletAmount,
+    poolAmount,
+    totalDuration: totalHours * 60,
+    cycleDuration: compatRechargeForm.cycleHours * 60,
+    totalHours,
+  }
+})
 
 const summaryCards = computed(() => [
   {
@@ -368,6 +427,7 @@ onMounted(async () => {
       })
     )
     adminUsage.value = (await getAdminUsage()).data
+    await loadQuotaStatus(false)
   } catch (error) {
     ElMessage.error(error instanceof Error ? error.message : t('admin.queryFailed'))
   }
@@ -397,17 +457,14 @@ async function save(provider: string) {
   }
 }
 
-async function loadQuotaStatus() {
-  if (!targetUserId.value) {
-    ElMessage.warning(t('common.required', { field: t('admin.userId') }))
-    return
-  }
-
+async function loadQuotaStatus(showSuccess = true) {
   quotaLoading.value = true
   try {
-    const response = await getAdminCreditStatus(targetUserId.value)
+    const response = await getSitePowerStatus()
     quotaStatus.value = response.data.data ?? null
-    ElMessage.success(t('admin.quotaLoaded'))
+    if (showSuccess) {
+      ElMessage.success(t('admin.quotaLoaded'))
+    }
   } catch (error) {
     ElMessage.error(error instanceof Error ? error.message : t('admin.queryFailed'))
   } finally {
@@ -415,27 +472,46 @@ async function loadQuotaStatus() {
   }
 }
 
-async function submitRecharge() {
-  if (!targetUserId.value) {
-    ElMessage.warning(t('common.required', { field: t('admin.userId') }))
+function openCompatRechargeModal() {
+  const totalPower =
+    (balances.tripo3d?.availablePower ?? 0) +
+    (balances.hyper3d?.availablePower ?? 0)
+
+  compatRechargeForm.totalPower = Number(totalPower.toFixed(2))
+  showCompatRechargeModal.value = true
+}
+
+async function submitCompatRecharge() {
+  if (compatRechargeForm.walletPercent + compatRechargeForm.poolPercent !== 100) {
+    ElMessage.warning(t('admin.compatRechargeValidationPercent'))
+    return
+  }
+  if (
+    compatRechargePreview.value.totalHours <= 0 ||
+    compatRechargePreview.value.totalHours < compatRechargeForm.cycleHours
+  ) {
+    ElMessage.warning(t('admin.compatRechargeValidationDuration'))
     return
   }
 
-  rechargeLoading.value = true
+  compatRechargeLoading.value = true
   try {
-    await rechargeAdminCredits({
-      userId: targetUserId.value,
-      wallet_amount: rechargeForm.wallet_amount,
-      pool_amount: rechargeForm.pool_amount,
-      total_duration: rechargeForm.total_duration,
-      cycle_duration: rechargeForm.cycle_duration,
+    await rechargeSitePower({
+      total_power: compatRechargeForm.totalPower,
+      wallet_percent: compatRechargeForm.walletPercent,
+      pool_percent: compatRechargeForm.poolPercent,
+      wallet_amount: compatRechargePreview.value.walletAmount,
+      pool_amount: compatRechargePreview.value.poolAmount,
+      total_duration: compatRechargePreview.value.totalDuration,
+      cycle_duration: compatRechargePreview.value.cycleDuration,
     })
     ElMessage.success(t('admin.rechargeSuccess'))
-    await loadQuotaStatus()
+    await loadQuotaStatus(false)
+    showCompatRechargeModal.value = false
   } catch (error) {
     ElMessage.error(error instanceof Error ? error.message : t('admin.rechargeFailed'))
   } finally {
-    rechargeLoading.value = false
+    compatRechargeLoading.value = false
   }
 }
 
@@ -572,8 +648,8 @@ function trendBarStyle(power: number, maxPower: number) {
 
 .summary-grid,
 .provider-grid,
-.recharge-grid,
-.usage-grid {
+.usage-grid,
+.compat-grid {
   display: grid;
   gap: 16px;
 }
@@ -718,13 +794,6 @@ function trendBarStyle(power: number, maxPower: number) {
   font-size: 13px;
 }
 
-.quota-toolbar {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(220px, 320px));
-  gap: 16px;
-  margin-bottom: 18px;
-}
-
 .field {
   display: grid;
   gap: 8px;
@@ -734,6 +803,16 @@ function trendBarStyle(power: number, maxPower: number) {
 
 .field--wide {
   max-width: 320px;
+}
+
+.compat-grid {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  margin-top: 18px;
+}
+
+.compat-grid .field--wide {
+  grid-column: 1 / -1;
+  max-width: none;
 }
 
 .quota-visual-grid {
@@ -845,13 +924,19 @@ function trendBarStyle(power: number, maxPower: number) {
   text-align: right;
 }
 
-.recharge-grid {
-  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
-}
-
 .actions {
   margin-top: 18px;
   align-items: center;
+}
+
+.dialog-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 12px;
+}
+
+.compat-preview {
+  margin: 18px 0 0;
 }
 
 .usage-grid {
@@ -921,7 +1006,8 @@ function trendBarStyle(power: number, maxPower: number) {
 
 @media (max-width: 960px) {
   .usage-grid,
-  .quota-visuals {
+  .quota-visuals,
+  .compat-grid {
     grid-template-columns: 1fr;
   }
 

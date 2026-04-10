@@ -32,4 +32,17 @@ describe('locale packs', () => {
   it.each(locales)('%s exports an independent translation object', (_localeName, locale) => {
     expect(locale).not.toBe(zhCN)
   })
+
+  it('zh-CN defines the compatibility recharge locale keys', () => {
+    const keys = collectKeyPaths(zhCN)
+
+    expect(keys).toContain('admin.compatRechargeAction')
+    expect(keys).toContain('admin.compatTotalPower')
+    expect(keys).toContain('admin.compatWalletPercent')
+    expect(keys).toContain('admin.compatPoolPercent')
+    expect(keys).toContain('admin.compatRechargeValidationPercent')
+    expect(keys).toContain('admin.compatRechargeValidationDuration')
+    expect(keys).toContain('admin.compatPreviewWallet')
+    expect(keys).toContain('admin.compatPreviewCycleHours')
+  })
 })

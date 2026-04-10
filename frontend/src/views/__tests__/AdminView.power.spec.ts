@@ -11,11 +11,9 @@ describe('AdminView power wiring', () => {
     expect(source).not.toContain("adminUsage?.totalCredits ?? 0")
   })
 
-  it('uses power-oriented i18n labels for quota and recharge fields', () => {
+  it('uses power-oriented i18n labels for the shared site quota dashboard', () => {
     expect(source).toContain("t('admin.walletBalance')")
     expect(source).toContain("t('admin.poolBalance')")
-    expect(source).toContain("t('admin.walletAmount')")
-    expect(source).toContain("t('admin.poolAmount')")
     expect(source).toContain("t('admin.balancePower',")
   })
 
@@ -28,9 +26,18 @@ describe('AdminView power wiring', () => {
     expect(source).toContain('trendBarStyle')
   })
 
-  it('keeps provider controls in the ops panel but removes provider_id from recharge payloads', () => {
+  it('renders a compat recharge button in the provider ops header and a site modal model', () => {
+    expect(source).toContain("t('admin.compatRechargeAction')")
+    expect(source).toContain('showCompatRechargeModal')
+    expect(source).toContain('compatRechargeForm.totalPower')
+    expect(source).toContain('compatRechargePreview')
+    expect(source).not.toContain('targetUserId')
+  })
+
+  it('keeps provider controls in the ops panel but removes provider_id and userId from recharge payloads', () => {
     expect(source).toContain('loadBalance(provider)')
     expect(source).not.toContain('rechargeForm.provider_id')
     expect(source).not.toContain('provider_id: rechargeForm.provider_id')
+    expect(source).not.toContain('userId: targetUserId.value')
   })
 })

@@ -13,13 +13,16 @@ describe('view i18n source wiring', () => {
     expect(source).toContain("t('common.saveFailed')")
     expect(source).toContain("t('admin.queryFailed')")
     expect(source).toContain("t('admin.rechargeFailed')")
-    expect(source).toContain("t('common.required', { field: t('admin.userId') })")
+    expect(source).not.toContain("t('common.required', { field: t('admin.userId') })")
+    expect(source).toContain("t('admin.compatRechargeValidationPercent')")
+    expect(source).toContain("t('admin.compatRechargeValidationDuration')")
     expect(source).not.toContain("t('common.required', { field: t('admin.provider') })")
     expect(source).toContain('locale.value')
 
     expect(source).not.toContain("'保存失败'")
     expect(source).not.toContain("'查询额度失败'")
     expect(source).not.toContain("'充值失败'")
+    expect(source).not.toContain("'钱包百分比与池塘百分比之和必须为 100%'")
     expect(source).not.toContain("toLocaleString('zh-CN')")
   })
 
