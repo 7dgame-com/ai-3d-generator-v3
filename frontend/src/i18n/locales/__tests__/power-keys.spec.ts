@@ -13,6 +13,8 @@ describe('power i18n keys', () => {
       expect(locale.generator.power).toContain('{n}')
       expect(locale.history.colPower).toBeTruthy()
       expect(locale.admin.balancePower).toBeTruthy()
+      expect(locale.admin.statusOnline).toBeTruthy()
+      expect(locale.admin.previewDockTitle).toBeTruthy()
     })
   })
 

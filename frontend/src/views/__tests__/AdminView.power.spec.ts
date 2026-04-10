@@ -40,4 +40,18 @@ describe('AdminView power wiring', () => {
     expect(source).not.toContain('provider_id: rechargeForm.provider_id')
     expect(source).not.toContain('userId: targetUserId.value')
   })
+
+  it('derives cockpit badge state for the shared site account', () => {
+    expect(source).toContain('quotaStatusTone')
+    expect(source).toContain('quotaStatusLabel')
+    expect(source).toContain("t('admin.statusOnline')")
+    expect(source).toContain("t('admin.statusLowReserve')")
+    expect(source).toContain("t('admin.statusDepleted')")
+    expect(source).toContain("t('admin.statusStandby')")
+  })
+
+  it('builds KPI rows for the cockpit instead of only relying on the old status list', () => {
+    expect(source).toContain('quotaKpis')
+    expect(source).toContain('cyclesRemaining')
+  })
 })

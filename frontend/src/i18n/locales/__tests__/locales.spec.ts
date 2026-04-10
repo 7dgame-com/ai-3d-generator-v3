@@ -45,4 +45,16 @@ describe('locale packs', () => {
     expect(keys).toContain('admin.compatPreviewWallet')
     expect(keys).toContain('admin.compatPreviewCycleHours')
   })
+
+  it('zh-CN defines the admin cockpit visual refresh keys', () => {
+    const keys = collectKeyPaths(zhCN)
+
+    expect(keys).toContain('admin.statusOnline')
+    expect(keys).toContain('admin.statusLowReserve')
+    expect(keys).toContain('admin.statusDepleted')
+    expect(keys).toContain('admin.statusStandby')
+    expect(keys).toContain('admin.pondChamberTitle')
+    expect(keys).toContain('admin.walletScheduleTitle')
+    expect(keys).toContain('admin.previewDockTitle')
+  })
 })

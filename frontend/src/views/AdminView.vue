@@ -360,6 +360,57 @@ const maxTrendPower = computed(() =>
 )
 const rankedUsers = computed(() => adminUsage.value?.userRanking ?? [])
 const trendRows = computed(() => adminUsage.value?.dailyTrend ?? [])
+const quotaStatusTone = computed(() => {
+  const status = quotaStatus.value
+  if (!status) {
+    return 'standby'
+  }
+
+  const total = status.wallet_balance + status.pool_balance
+  if (total <= 0) {
+    return 'depleted'
+  }
+  if (status.wallet_balance <= 0 || status.pool_balance <= 0) {
+    return 'low'
+  }
+
+  return 'online'
+})
+const quotaStatusLabel = computed(() => {
+  if (quotaStatusTone.value === 'online') {
+    return t('admin.statusOnline')
+  }
+  if (quotaStatusTone.value === 'low') {
+    return t('admin.statusLowReserve')
+  }
+  if (quotaStatusTone.value === 'depleted') {
+    return t('admin.statusDepleted')
+  }
+
+  return t('admin.statusStandby')
+})
+const quotaKpis = computed(() => [
+  {
+    key: 'total',
+    label: t('admin.totalPowerCard'),
+    value: formatPower(totalQuota.value),
+  },
+  {
+    key: 'wallet',
+    label: t('admin.walletBalance'),
+    value: formatPower(totalWallet.value),
+  },
+  {
+    key: 'pool',
+    label: t('admin.poolBalance'),
+    value: formatPower(totalPool.value),
+  },
+  {
+    key: 'cycles',
+    label: t('admin.cyclesRemaining'),
+    value: String(quotaStatus.value?.cycles_remaining ?? 0),
+  },
+])
 const compatRechargePreview = computed(() => {
   const totalHours = compatRechargeForm.totalDays * 24 + compatRechargeForm.totalHours
   const walletAmount = Number(
