@@ -13,6 +13,7 @@ export function useCreditCheck() {
 
   async function checkCredits(): Promise<void> {
     try {
+      // `/credits/status` now reflects the shared site power account.
       const response = await getCreditStatus()
       const status = response.data.data ?? null
       const shouldShowDialog = isAllCreditsZero(status)

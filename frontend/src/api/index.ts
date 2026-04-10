@@ -152,6 +152,16 @@ export interface PowerAccountStatus {
   next_cycle_at: string | null
 }
 
+export interface SitePowerRechargePayload {
+  total_power: number
+  wallet_percent: number
+  pool_percent: number
+  wallet_amount: number
+  pool_amount: number
+  total_duration: number
+  cycle_duration: number
+}
+
 export interface PrepareTaskResponse {
   apiKey: string
   prepareToken: string
@@ -266,8 +276,17 @@ export const getCreditStatus = (providerId?: string) =>
     params: providerId ? { provider_id: providerId } : undefined,
   })
 
+export const getSitePowerStatus = () =>
+  backendApi.get<{ data: PowerAccountStatus }>('/admin/site-power-status')
+
 export const getAdminCreditStatus = (userId: number) =>
   backendApi.get<{ data: PowerAccountStatus }>(`/admin/credits/${userId}`)
+
+export const rechargeSitePower = (payload: SitePowerRechargePayload) =>
+  backendApi.post<{ success: boolean; data: PowerAccountStatus }>(
+    '/admin/site-power-recharge',
+    payload
+  )
 
 export const rechargeAdminCredits = (payload: {
   userId: number
