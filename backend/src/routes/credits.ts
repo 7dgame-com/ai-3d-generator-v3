@@ -11,6 +11,11 @@ import { auth } from '../middleware/auth';
 import { requirePermission } from '../middleware/permission';
 import { requireRootUser } from '../middleware/rootOnly';
 import { getStatusHandler, getAdminStatusHandler, rechargeHandler } from '../controllers/credits';
+import {
+  getAdminSitePowerStatusHandler,
+  getStatusHandler as getSitePowerStatusHandler,
+  rechargeSitePowerHandler,
+} from '../controllers/sitePower';
 
 const router = Router();
 
@@ -21,13 +26,27 @@ router.post(
   requireRootUser,
   rechargeHandler as unknown as RequestHandler
 );
-router.get('/credits/status', auth, getStatusHandler as unknown as RequestHandler);
+router.get('/credits/status', auth, getSitePowerStatusHandler as unknown as RequestHandler);
 router.get(
   '/admin/credits/:userId',
   auth,
   requirePermission('admin-config'),
   requireRootUser,
   getAdminStatusHandler as unknown as RequestHandler
+);
+router.get(
+  '/admin/site-power-status',
+  auth,
+  requirePermission('admin-config'),
+  requireRootUser,
+  getAdminSitePowerStatusHandler as unknown as RequestHandler
+);
+router.post(
+  '/admin/site-power-recharge',
+  auth,
+  requirePermission('admin-config'),
+  requireRootUser,
+  rechargeSitePowerHandler as unknown as RequestHandler
 );
 
 export default router;
