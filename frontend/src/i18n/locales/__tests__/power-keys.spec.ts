@@ -22,4 +22,14 @@ describe('power i18n keys', () => {
       expect(locale.history).not.toHaveProperty('colCredits')
     })
   })
+
+  it('exports unified compat console copy in every locale', () => {
+    locales.forEach((locale) => {
+      expect(locale.admin.compatSummarySplit).toBeTruthy()
+      expect(locale.admin.compatSummaryDuration).toBeTruthy()
+      expect(locale.admin.compatAllocationTitle).toBeTruthy()
+      expect(locale.admin.compatScheduleTitle).toBeTruthy()
+      expect(locale.admin.compatPreviewDockTitle).toBeTruthy()
+    })
+  })
 })

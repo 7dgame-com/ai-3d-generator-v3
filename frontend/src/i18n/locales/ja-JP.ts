@@ -1,7 +1,7 @@
 export default {
   pluginMeta: {
     name: 'AI 3D ジェネレーター V3',
-    description: 'Tripo3D、Hyper3D、COS を利用した独立型 3D 生成プラグイン',
+    description: '3D 生成サービスと COS を利用した独立型 3D 生成プラグイン',
     groupName: 'ユーティリティ',
   },
   common: {
@@ -82,6 +82,11 @@ export default {
     compatCycleHours: '周期（時間）',
     compatRechargeValidationPercent: 'ウォレット比率とプール比率の合計は 100% である必要があります',
     compatRechargeValidationDuration: '総時間は 0 より大きく、周期より短くできません',
+    compatSummarySplit: '配分比率',
+    compatSummaryDuration: '時間 / サイクル',
+    compatAllocationTitle: '配分設定',
+    compatScheduleTitle: '時間設定',
+    compatPreviewDockTitle: '実行プレビュー',
     compatPreviewWallet: 'ウォレット',
     compatPreviewPool: 'プール',
     compatPreviewTotalHours: '総時間',

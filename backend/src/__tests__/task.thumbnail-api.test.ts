@@ -3,6 +3,7 @@ import { getTask, listTasks } from '../controllers/task';
 
 const mockQuery = jest.fn();
 const mockIsDownloadExpired = jest.fn();
+const mockGetEnabledIds = jest.fn(() => ['tripo3d', 'hyper3d']);
 
 jest.mock('../db/connection', () => ({
   query: (...args: unknown[]) => mockQuery(...args),
@@ -18,6 +19,12 @@ jest.mock('../utils/urlExpiry', () => {
     isDownloadExpired: (...args: unknown[]) => mockIsDownloadExpired(...args),
   };
 });
+
+jest.mock('../adapters/ProviderRegistry', () => ({
+  providerRegistry: {
+    getEnabledIds: () => mockGetEnabledIds(),
+  },
+}));
 
 function createResponse() {
   const payload: { body?: unknown } = {};
@@ -35,6 +42,7 @@ function createResponse() {
 describe('task thumbnail API fields', () => {
   beforeEach(() => {
     jest.clearAllMocks();
+    mockGetEnabledIds.mockReturnValue(['tripo3d', 'hyper3d']);
   });
 
   it('returns thumbnailUrl and thumbnailExpired from GET /tasks', async () => {

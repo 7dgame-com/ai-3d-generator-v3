@@ -22,155 +22,222 @@
     </section>
 
     <section class="panel">
-      <div class="panel-head">
-        <div>
-          <h3>{{ t('admin.providerOpsTitle') }}</h3>
-          <p class="panel-hint">{{ t('admin.providerOpsHint') }}</p>
-        </div>
-        <el-button type="primary" @click="openCompatRechargeModal">
-          {{ t('admin.compatRechargeAction') }}
-        </el-button>
-      </div>
-
-      <div class="provider-grid">
-        <article
-          v-for="provider in providers"
-          :key="provider"
-          class="provider-card"
-          :data-configured="String(configs[provider]?.configured ?? false)"
-        >
-          <div class="provider-card__top">
+      <div class="admin-console">
+        <article class="provider-console">
+          <div class="console-head">
             <div>
-              <p class="provider-name">{{ provider }}</p>
-              <p class="provider-subtitle">
-                {{ t('admin.configuredKey') }}:
-                <span>{{ configs[provider]?.apiKeyMasked || t('admin.notConfigured') }}</span>
+              <h3>{{ t('admin.providerOpsTitle') }}</h3>
+              <p class="panel-hint">{{ t('admin.providerOpsHint') }}</p>
+            </div>
+
+            <div class="console-head__meta">
+              <div class="console-badge">
+                <span>{{ t('admin.balancePowerLabel') }}</span>
+                <strong>{{ formatPower(providerConsoleTotalPower) }}</strong>
+              </div>
+              <div class="console-badge">
+                <span>{{ t('admin.providerCountValue', { count: providers.length }) }}</span>
+              </div>
+            </div>
+          </div>
+
+          <div class="provider-console__grid">
+            <article
+              v-for="provider in providers"
+              :key="provider"
+              class="provider-card"
+              :data-configured="String(configs[provider]?.configured ?? false)"
+            >
+              <div class="provider-card__top">
+                <div>
+                  <p class="provider-name">{{ provider }}</p>
+                  <p class="provider-subtitle">
+                    {{ t('admin.configuredKey') }}:
+                    <span>{{ configs[provider]?.apiKeyMasked || t('admin.notConfigured') }}</span>
+                  </p>
+                </div>
+                <span class="status-pill" :data-ready="String(configs[provider]?.configured ?? false)">
+                  {{ configs[provider]?.configured ? t('admin.providerStatusConfigured') : t('admin.providerStatusMissing') }}
+                </span>
+              </div>
+
+              <div class="provider-metrics">
+                <div class="metric-card">
+                  <span>{{ t('admin.balancePowerLabel') }}</span>
+                  <strong>{{ formatPower(balances[provider]?.availablePower ?? 0) }}</strong>
+                </div>
+                <div class="metric-card">
+                  <span>{{ t('admin.rawBalance') }}</span>
+                  <strong>{{ formatRawCredits(balances[provider]?.available) }}</strong>
+                </div>
+              </div>
+
+              <p class="provider-footnote">
+                {{
+                  t('admin.balancePower', {
+                    availablePower: balances[provider]?.availablePower ?? 0,
+                    available: balances[provider]?.available ?? 0,
+                  })
+                }}
               </p>
-            </div>
-            <span class="status-pill" :data-ready="String(configs[provider]?.configured ?? false)">
-              {{ configs[provider]?.configured ? t('admin.providerStatusConfigured') : t('admin.providerStatusMissing') }}
-            </span>
-          </div>
 
-          <div class="provider-metrics">
-            <div class="metric-card">
-              <span>{{ t('admin.balancePowerLabel') }}</span>
-              <strong>{{ formatPower(balances[provider]?.availablePower ?? 0) }}</strong>
-            </div>
-            <div class="metric-card">
-              <span>{{ t('admin.rawBalance') }}</span>
-              <strong>{{ formatRawCredits(balances[provider]?.available) }}</strong>
-            </div>
-          </div>
-
-          <p class="provider-footnote">
-            {{
-              t('admin.balancePower', {
-                availablePower: balances[provider]?.availablePower ?? 0,
-                available: balances[provider]?.available ?? 0,
-              })
-            }}
-          </p>
-
-          <div class="provider-actions">
-            <el-input
-              v-model="draftKeys[provider]"
-              type="password"
-              :placeholder="t('admin.apiKeyPlaceholder')"
-            />
-            <div class="actions">
-              <el-button @click="loadBalance(provider)">{{ t('admin.checkBalance') }}</el-button>
-              <el-button type="primary" @click="save(provider)">{{ t('common.save') }}</el-button>
-            </div>
-          </div>
-        </article>
-      </div>
-    </section>
-
-    <section class="panel">
-      <div class="panel-head">
-        <div>
-          <h3>{{ t('admin.quotaOverviewTitle') }}</h3>
-          <p class="panel-hint">{{ t('admin.quotaOverviewHint') }}</p>
-        </div>
-        <el-button :loading="quotaLoading" @click="loadQuotaStatus">{{ t('admin.loadQuota') }}</el-button>
-      </div>
-
-      <div v-if="quotaStatus" class="quota-visual-grid">
-        <article class="quota-card">
-          <div class="quota-card__head">
-            <div>
-              <h4>{{ t('admin.totalPowerCard') }}</h4>
-              <p>{{ t('admin.powerValue', { value: totalQuota }) }}</p>
-            </div>
-            <el-tag type="info">{{ t('admin.statusLabel') }}</el-tag>
-          </div>
-
-          <div class="quota-visuals">
-            <div class="pond-widget">
-              <span class="widget-label">{{ t('admin.poolLevel') }}</span>
-              <div class="pond-shell">
-                <div class="pond-fill" :style="poolFillStyle(quotaStatus)">
-                  <span class="pond-fill__glow"></span>
-                </div>
-                <div class="pond-overlay">
-                  <strong>{{ formatPower(quotaStatus.pool_balance) }}</strong>
-                  <small>{{ t('admin.poolBaseline') }} {{ formatPower(quotaStatus.pool_baseline) }}</small>
+              <div class="provider-actions">
+                <el-input
+                  v-model="draftKeys[provider]"
+                  type="password"
+                  :placeholder="t('admin.apiKeyPlaceholder')"
+                />
+                <div class="actions">
+                  <el-button @click="loadBalance(provider)">{{ t('admin.checkBalance') }}</el-button>
+                  <el-button type="primary" @click="save(provider)">{{ t('common.save') }}</el-button>
                 </div>
               </div>
+            </article>
+          </div>
+        </article>
+
+        <article class="site-power-console">
+          <div class="console-head">
+            <div>
+              <h3>{{ t('admin.quotaOverviewTitle') }}</h3>
+              <p class="panel-hint">{{ t('admin.quotaOverviewHint') }}</p>
             </div>
 
-            <div class="wallet-widget">
-              <span class="widget-label">{{ t('admin.walletReserve') }}</span>
-              <div class="wallet-meter">
-                <div class="wallet-meter__track">
-                  <div class="wallet-meter__fill" :style="walletFillStyle(quotaStatus)"></div>
-                </div>
-                <strong>{{ formatPower(quotaStatus.wallet_balance) }}</strong>
-              </div>
+            <div class="site-power-console__actions">
+              <el-button :loading="quotaLoading" @click="loadQuotaStatus">{{ t('admin.loadQuota') }}</el-button>
+              <el-button type="primary" @click="openCompatRechargeModal">
+                {{ t('admin.compatRechargeAction') }}
+              </el-button>
             </div>
           </div>
 
-          <dl class="status-list">
-            <div>
-              <dt>{{ t('admin.walletBalance') }}</dt>
-              <dd>{{ formatPower(quotaStatus.wallet_balance) }}</dd>
-            </div>
-            <div>
-              <dt>{{ t('admin.poolBalance') }}</dt>
-              <dd>{{ formatPower(quotaStatus.pool_balance) }}</dd>
-            </div>
-            <div>
-              <dt>{{ t('admin.poolBaseline') }}</dt>
-              <dd>{{ formatPower(quotaStatus.pool_baseline) }}</dd>
-            </div>
-            <div>
-              <dt>{{ t('admin.cyclesRemaining') }}</dt>
-              <dd>{{ quotaStatus.cycles_remaining }}</dd>
-            </div>
-            <div>
-              <dt>{{ t('admin.cycleDuration') }}</dt>
-              <dd>{{ quotaStatus.cycle_duration }}</dd>
-            </div>
-            <div>
-              <dt>{{ t('admin.totalDuration') }}</dt>
-              <dd>{{ quotaStatus.total_duration }}</dd>
-            </div>
-            <div>
-              <dt>{{ t('admin.cycleStartedAt') }}</dt>
-              <dd>{{ formatDateTime(quotaStatus.cycle_started_at) }}</dd>
-            </div>
-            <div>
-              <dt>{{ t('admin.nextCycleAt') }}</dt>
-              <dd>{{ formatDateTime(quotaStatus.next_cycle_at) }}</dd>
-            </div>
-          </dl>
+          <div class="site-power-console__summary">
+            <article class="site-power-console__summary-card">
+              <span class="summary-label">{{ t('admin.totalPowerCard') }}</span>
+              <strong class="summary-value">{{ formatPower(totalQuota) }}</strong>
+              <span class="summary-meta">{{ t('admin.statusLabel') }}</span>
+            </article>
+            <article class="site-power-console__summary-card">
+              <span class="summary-label">{{ t('admin.walletTotal') }}</span>
+              <strong class="summary-value">{{ formatPower(totalWallet) }}</strong>
+              <span class="summary-meta">{{ t('admin.walletBalance') }}</span>
+            </article>
+            <article class="site-power-console__summary-card">
+              <span class="summary-label">{{ t('admin.poolTotal') }}</span>
+              <strong class="summary-value">{{ formatPower(totalPool) }}</strong>
+              <span class="summary-meta">{{ t('admin.poolBaseline') }}</span>
+            </article>
+            <article class="site-power-console__summary-card">
+              <span class="summary-label">{{ t('admin.balancePowerLabel') }}</span>
+              <strong class="summary-value">{{ formatPower(providerConsoleTotalPower) }}</strong>
+              <span class="summary-meta">{{ t('admin.providerCountValue', { count: providers.length }) }}</span>
+            </article>
+          </div>
+
+          <div v-if="quotaStatus" class="site-power-console__grid">
+            <article class="quota-card">
+              <div class="quota-card__head">
+                <div>
+                  <h4>{{ t('admin.totalPowerCard') }}</h4>
+                  <p>{{ t('admin.powerValue', { value: totalQuota }) }}</p>
+                </div>
+                <el-tag type="info">{{ t('admin.statusLabel') }}</el-tag>
+              </div>
+
+              <div class="quota-visuals">
+                <div class="pond-widget">
+                  <span class="widget-label">{{ t('admin.poolLevel') }}</span>
+                  <div class="pond-shell">
+                    <div class="pond-fill" :style="poolFillStyle(quotaStatus)">
+                      <span class="pond-fill__glow"></span>
+                    </div>
+                    <div class="pond-overlay">
+                      <strong>{{ formatPower(quotaStatus.pool_balance) }}</strong>
+                      <small>{{ t('admin.poolBaseline') }} {{ formatPower(quotaStatus.pool_baseline) }}</small>
+                    </div>
+                  </div>
+                </div>
+
+                <div class="wallet-widget">
+                  <span class="widget-label">{{ t('admin.walletReserve') }}</span>
+                  <div class="wallet-meter">
+                    <div class="wallet-meter__track">
+                      <div class="wallet-meter__fill" :style="walletFillStyle(quotaStatus)"></div>
+                    </div>
+                    <strong>{{ formatPower(quotaStatus.wallet_balance) }}</strong>
+                  </div>
+                </div>
+              </div>
+
+              <dl class="status-list">
+                <div>
+                  <dt>{{ t('admin.walletBalance') }}</dt>
+                  <dd>{{ formatPower(quotaStatus.wallet_balance) }}</dd>
+                </div>
+                <div>
+                  <dt>{{ t('admin.poolBalance') }}</dt>
+                  <dd>{{ formatPower(quotaStatus.pool_balance) }}</dd>
+                </div>
+                <div>
+                  <dt>{{ t('admin.poolBaseline') }}</dt>
+                  <dd>{{ formatPower(quotaStatus.pool_baseline) }}</dd>
+                </div>
+                <div>
+                  <dt>{{ t('admin.cyclesRemaining') }}</dt>
+                  <dd>{{ quotaStatus.cycles_remaining }}</dd>
+                </div>
+                <div>
+                  <dt>{{ t('admin.cycleDuration') }}</dt>
+                  <dd>{{ quotaStatus.cycle_duration }}</dd>
+                </div>
+                <div>
+                  <dt>{{ t('admin.totalDuration') }}</dt>
+                  <dd>{{ quotaStatus.total_duration }}</dd>
+                </div>
+                <div>
+                  <dt>{{ t('admin.cycleStartedAt') }}</dt>
+                  <dd>{{ formatDateTime(quotaStatus.cycle_started_at) }}</dd>
+                </div>
+                <div>
+                  <dt>{{ t('admin.nextCycleAt') }}</dt>
+                  <dd>{{ formatDateTime(quotaStatus.next_cycle_at) }}</dd>
+                </div>
+              </dl>
+            </article>
+
+            <aside class="site-power-console__aside">
+              <div class="site-power-console__aside-card">
+                <span class="widget-label">{{ t('admin.compatRechargeAction') }}</span>
+                <strong>{{ formatPower(providerConsoleTotalPower) }}</strong>
+                <p class="panel-hint">{{ t('admin.rechargeHint') }}</p>
+              </div>
+
+              <dl class="status-list">
+                <div>
+                  <dt>{{ t('admin.providerCountValue', { count: providers.length }) }}</dt>
+                  <dd>{{ formatPower(providerConsoleTotalPower) }}</dd>
+                </div>
+                <div>
+                  <dt>{{ t('admin.walletBalance') }}</dt>
+                  <dd>{{ formatPower(totalWallet) }}</dd>
+                </div>
+                <div>
+                  <dt>{{ t('admin.poolBalance') }}</dt>
+                  <dd>{{ formatPower(totalPool) }}</dd>
+                </div>
+                <div>
+                  <dt>{{ t('admin.poolBaseline') }}</dt>
+                  <dd>{{ formatPower(totalBaseline) }}</dd>
+                </div>
+              </dl>
+            </aside>
+          </div>
+          <el-empty
+            v-else
+            :description="t('admin.quotaEmpty')"
+          />
         </article>
       </div>
-      <el-empty
-        v-else
-        :description="t('admin.quotaEmpty')"
-      />
     </section>
 
     <section class="panel">
@@ -214,96 +281,134 @@
     <el-dialog
       v-model="showCompatRechargeModal"
       :title="t('admin.rechargeTitle')"
-      width="520px"
+      width="860px"
     >
-      <p class="panel-hint">{{ t('admin.rechargeHint') }}</p>
+      <div class="compat-console">
+        <p class="panel-hint">{{ t('admin.rechargeHint') }}</p>
 
-      <div class="compat-grid">
-        <label class="field field--wide">
-          <span>{{ t('admin.compatTotalPower') }}</span>
-          <el-input-number
-            v-model="compatRechargeForm.totalPower"
-            :min="0"
-            :precision="2"
-            :step="10"
-          />
-        </label>
-        <label class="field">
-          <span>{{ t('admin.compatWalletPercent') }}</span>
-          <el-input-number
-            v-model="compatRechargeForm.walletPercent"
-            :min="0"
-            :max="100"
-            :precision="0"
-          />
-        </label>
-        <label class="field">
-          <span>{{ t('admin.compatPoolPercent') }}</span>
-          <el-input-number
-            v-model="compatRechargeForm.poolPercent"
-            :min="0"
-            :max="100"
-            :precision="0"
-          />
-        </label>
-        <label class="field">
-          <span>{{ t('admin.compatTotalDays') }}</span>
-          <el-input-number
-            v-model="compatRechargeForm.totalDays"
-            :min="0"
-            :precision="0"
-          />
-        </label>
-        <label class="field">
-          <span>{{ t('admin.compatTotalHours') }}</span>
-          <el-input-number
-            v-model="compatRechargeForm.totalHours"
-            :min="0"
-            :max="23"
-            :precision="0"
-          />
-        </label>
-        <label class="field field--wide">
-          <span>{{ t('admin.compatCycleHours') }}</span>
-          <el-input-number
-            v-model="compatRechargeForm.cycleHours"
-            :min="1"
-            :precision="0"
-          />
-        </label>
-      </div>
-
-      <dl class="status-list compat-preview">
-        <div>
-          <dt>{{ t('admin.compatPreviewWallet') }}</dt>
-          <dd>{{ formatPower(compatRechargePreview.walletAmount) }}</dd>
-        </div>
-        <div>
-          <dt>{{ t('admin.compatPreviewPool') }}</dt>
-          <dd>{{ formatPower(compatRechargePreview.poolAmount) }}</dd>
-        </div>
-        <div>
-          <dt>{{ t('admin.compatPreviewTotalHours') }}</dt>
-          <dd>{{ compatRechargePreview.totalHours }}h</dd>
-        </div>
-        <div>
-          <dt>{{ t('admin.compatPreviewCycleHours') }}</dt>
-          <dd>{{ compatRechargeForm.cycleHours }}h</dd>
-        </div>
-      </dl>
-
-      <template #footer>
-        <div class="dialog-actions">
-          <el-button @click="showCompatRechargeModal = false">{{ t('common.cancel') }}</el-button>
-          <el-button
-            type="primary"
-            :loading="compatRechargeLoading"
-            @click="submitCompatRecharge"
+        <div class="compat-console__summary">
+          <article
+            v-for="card in compatSummaryCards"
+            :key="card.key"
+            class="compat-console__summary-card"
           >
-            {{ t('admin.recharge') }}
-          </el-button>
+            <span class="summary-label">{{ card.label }}</span>
+            <strong class="summary-value">{{ card.value }}</strong>
+          </article>
         </div>
-      </template>
+
+        <div class="compat-console__body">
+          <div class="compat-console__form">
+            <section class="compat-console__group">
+              <div class="compat-console__group-head">
+                <h4>{{ t('admin.compatAllocationTitle') }}</h4>
+              </div>
+
+              <div class="compat-console__fields">
+                <label class="field field--wide">
+                  <span>{{ t('admin.compatTotalPower') }}</span>
+                  <el-input-number
+                    v-model="compatRechargeForm.totalPower"
+                    :min="0"
+                    :precision="2"
+                    :step="10"
+                  />
+                </label>
+                <label class="field">
+                  <span>{{ t('admin.compatWalletPercent') }}</span>
+                  <el-input-number
+                    v-model="compatRechargeForm.walletPercent"
+                    :min="0"
+                    :max="100"
+                    :precision="0"
+                  />
+                </label>
+                <label class="field">
+                  <span>{{ t('admin.compatPoolPercent') }}</span>
+                  <el-input-number
+                    v-model="compatRechargeForm.poolPercent"
+                    :min="0"
+                    :max="100"
+                    :precision="0"
+                  />
+                </label>
+              </div>
+            </section>
+
+            <section class="compat-console__group">
+              <div class="compat-console__group-head">
+                <h4>{{ t('admin.compatScheduleTitle') }}</h4>
+              </div>
+
+              <div class="compat-console__fields">
+                <label class="field">
+                  <span>{{ t('admin.compatTotalDays') }}</span>
+                  <el-input-number
+                    v-model="compatRechargeForm.totalDays"
+                    :min="0"
+                    :precision="0"
+                  />
+                </label>
+                <label class="field">
+                  <span>{{ t('admin.compatTotalHours') }}</span>
+                  <el-input-number
+                    v-model="compatRechargeForm.totalHours"
+                    :min="0"
+                    :max="23"
+                    :precision="0"
+                  />
+                </label>
+                <label class="field field--wide">
+                  <span>{{ t('admin.compatCycleHours') }}</span>
+                  <el-input-number
+                    v-model="compatRechargeForm.cycleHours"
+                    :min="1"
+                    :precision="0"
+                  />
+                </label>
+              </div>
+            </section>
+          </div>
+
+          <aside class="compat-console__preview-dock">
+            <div class="compat-console__preview-head">
+              <span class="widget-label">{{ compatPreviewDockTitle }}</span>
+              <strong>{{ formatPower(compatRechargeForm.totalPower) }}</strong>
+              <p class="panel-hint">{{ t('admin.rechargeHint') }}</p>
+            </div>
+
+            <dl class="status-list">
+              <div>
+                <dt>{{ t('admin.compatPreviewWallet') }}</dt>
+                <dd>{{ formatPower(compatRechargePreview.walletAmount) }}</dd>
+              </div>
+              <div>
+                <dt>{{ t('admin.compatPreviewPool') }}</dt>
+                <dd>{{ formatPower(compatRechargePreview.poolAmount) }}</dd>
+              </div>
+              <div>
+                <dt>{{ t('admin.compatPreviewTotalHours') }}</dt>
+                <dd>{{ compatRechargePreview.totalHours }}h</dd>
+              </div>
+              <div>
+                <dt>{{ t('admin.compatPreviewCycleHours') }}</dt>
+                <dd>{{ compatRechargeForm.cycleHours }}h</dd>
+              </div>
+            </dl>
+
+            <div class="dialog-actions">
+              <el-button @click="showCompatRechargeModal = false">{{ t('common.cancel') }}</el-button>
+              <el-button
+                type="primary"
+                :loading="compatRechargeLoading"
+                @click="submitCompatRecharge"
+              >
+                {{ t('admin.recharge') }}
+              </el-button>
+            </div>
+          </aside>
+        </div>
+      </div>
     </el-dialog>
   </div>
 </template>
@@ -354,6 +459,13 @@ const totalWallet = computed(() => quotaStatus.value?.wallet_balance ?? 0)
 const totalPool = computed(() => quotaStatus.value?.pool_balance ?? 0)
 const totalBaseline = computed(() => quotaStatus.value?.pool_baseline ?? 0)
 const totalQuota = computed(() => totalWallet.value + totalPool.value)
+const providerConsoleTotalPower = computed(() =>
+  Number(
+    providers.value
+      .reduce((sum, provider) => sum + (balances[provider]?.availablePower ?? 0), 0)
+      .toFixed(2)
+  )
+)
 const maxWalletBalance = computed(() => Math.max(1, quotaStatus.value?.wallet_balance ?? 0))
 const maxTrendPower = computed(() =>
   Math.max(1, ...(adminUsage.value?.dailyTrend ?? []).map((item) => item.power))
@@ -377,6 +489,24 @@ const compatRechargePreview = computed(() => {
     totalHours,
   }
 })
+const compatSummaryCards = computed(() => [
+  {
+    key: 'total',
+    label: t('admin.compatTotalPower'),
+    value: formatPower(compatRechargeForm.totalPower),
+  },
+  {
+    key: 'split',
+    label: t('admin.compatSummarySplit'),
+    value: `${compatRechargeForm.walletPercent}% / ${compatRechargeForm.poolPercent}%`,
+  },
+  {
+    key: 'duration',
+    label: t('admin.compatSummaryDuration'),
+    value: `${compatRechargePreview.value.totalHours}h / ${compatRechargeForm.cycleHours}h`,
+  },
+])
+const compatPreviewDockTitle = computed(() => t('admin.compatPreviewDockTitle'))
 
 const summaryCards = computed(() => [
   {
@@ -473,11 +603,7 @@ async function loadQuotaStatus(showSuccess = true) {
 }
 
 function openCompatRechargeModal() {
-  const totalPower =
-    (balances.tripo3d?.availablePower ?? 0) +
-    (balances.hyper3d?.availablePower ?? 0)
-
-  compatRechargeForm.totalPower = Number(totalPower.toFixed(2))
+  compatRechargeForm.totalPower = providerConsoleTotalPower.value
   showCompatRechargeModal.value = true
 }
 
@@ -647,11 +773,77 @@ function trendBarStyle(power: number, maxPower: number) {
 }
 
 .summary-grid,
-.provider-grid,
-.usage-grid,
-.compat-grid {
+.provider-console__grid,
+.usage-grid {
   display: grid;
   gap: 16px;
+}
+
+.admin-console {
+  display: grid;
+  gap: 24px;
+}
+
+.provider-console,
+.site-power-console {
+  display: grid;
+  gap: 18px;
+  padding: 24px;
+  border-radius: 24px;
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.94), rgba(248, 250, 252, 0.88)),
+    rgba(255, 255, 255, 0.92);
+  border: 1px solid rgba(226, 232, 240, 0.92);
+}
+
+.console-head {
+  display: flex;
+  justify-content: space-between;
+  gap: 16px;
+  align-items: flex-start;
+}
+
+.console-head__meta,
+.site-power-console__actions {
+  display: flex;
+  gap: 12px;
+  flex-wrap: wrap;
+  align-items: center;
+}
+
+.console-badge,
+.site-power-console__summary-card,
+.compat-console__summary-card {
+  padding: 14px 16px;
+  border-radius: 18px;
+  background: linear-gradient(180deg, rgba(248, 250, 252, 0.98), rgba(226, 232, 240, 0.72));
+  border: 1px solid rgba(203, 213, 225, 0.78);
+}
+
+.console-badge span,
+.site-power-console__summary-card .summary-label,
+.compat-console__summary-card .summary-label {
+  display: block;
+  color: var(--ink-soft);
+  font-size: 13px;
+}
+
+.console-badge strong,
+.site-power-console__summary-card .summary-value,
+.compat-console__summary-card .summary-value,
+.site-power-console__aside-card strong,
+.compat-console__preview-head strong {
+  display: block;
+  margin-top: 8px;
+  color: var(--ink-strong);
+  font-size: 24px;
+  line-height: 1.1;
+}
+
+.site-power-console__summary-card .summary-meta {
+  display: block;
+  margin-top: 8px;
+  color: var(--ink-soft);
 }
 
 .summary-grid {
@@ -700,12 +892,15 @@ function trendBarStyle(power: number, maxPower: number) {
   line-height: 1.1;
 }
 
-.provider-grid {
+.provider-console__grid {
   grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
 }
 
 .provider-card,
 .quota-card,
+.site-power-console__aside-card,
+.compat-console__group,
+.compat-console__preview-dock,
 .trend-board,
 .ranking-board {
   background: var(--panel-bg);
@@ -805,14 +1000,73 @@ function trendBarStyle(power: number, maxPower: number) {
   max-width: 320px;
 }
 
-.compat-grid {
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  margin-top: 18px;
+.site-power-console__summary {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
+  gap: 14px;
 }
 
-.compat-grid .field--wide {
+.site-power-console__grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1.5fr) minmax(260px, 0.85fr);
+  gap: 18px;
+  align-items: start;
+}
+
+.site-power-console__aside {
+  display: grid;
+  gap: 16px;
+}
+
+.compat-console {
+  display: grid;
+  gap: 18px;
+}
+
+.compat-console__summary {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 14px;
+}
+
+.compat-console__body {
+  display: grid;
+  grid-template-columns: minmax(0, 1.35fr) minmax(260px, 0.85fr);
+  gap: 18px;
+  align-items: start;
+}
+
+.compat-console__form {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 16px;
+}
+
+.compat-console__group,
+.compat-console__preview-dock {
+  display: grid;
+  gap: 14px;
+}
+
+.compat-console__group-head h4 {
+  margin: 0;
+  color: var(--ink-strong);
+}
+
+.compat-console__fields {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 14px;
+}
+
+.compat-console__fields .field--wide {
   grid-column: 1 / -1;
   max-width: none;
+}
+
+.compat-console__preview-head {
+  display: grid;
+  gap: 8px;
 }
 
 .quota-visual-grid {
@@ -1007,10 +1261,17 @@ function trendBarStyle(power: number, maxPower: number) {
 @media (max-width: 960px) {
   .usage-grid,
   .quota-visuals,
-  .compat-grid {
+  .site-power-console__grid,
+  .compat-console__body,
+  .compat-console__form,
+  .compat-console__summary,
+  .compat-console__fields {
     grid-template-columns: 1fr;
   }
 
+  .console-head,
+  .console-head__meta,
+  .site-power-console__actions,
   .provider-card__top,
   .panel-head,
   .quota-card__head,

@@ -6,6 +6,7 @@
  */
 
 import { Response } from 'express';
+import { providerRegistry } from '../adapters/ProviderRegistry';
 import { query } from '../db/connection';
 import { AuthenticatedRequest } from '../middleware/auth';
 import { normalizeTaskBilling } from '../utils/taskBilling';
@@ -14,6 +15,7 @@ import { normalizeTaskBilling } from '../utils/taskBilling';
 
 export async function getUsageSummary(req: AuthenticatedRequest, res: Response): Promise<void> {
   const userId = req.user.userId;
+  const enabledProviderIds = new Set(providerRegistry.getEnabledIds());
 
   try {
     const successRows = await query<
@@ -43,6 +45,10 @@ export async function getUsageSummary(req: AuthenticatedRequest, res: Response):
     const dailyTrendMap = new Map<string, { credits: number; power: number }>();
 
     for (const row of successRows) {
+      if (!enabledProviderIds.has(row.provider_id)) {
+        continue;
+      }
+
       const billing = normalizeTaskBilling({
         providerId: row.provider_id,
         creditCost: row.credit_cost,
@@ -92,6 +98,7 @@ export async function getUsageSummary(req: AuthenticatedRequest, res: Response):
 
 export async function getUsageHistory(req: AuthenticatedRequest, res: Response): Promise<void> {
   const userId = req.user.userId;
+  const enabledProviderIds = new Set(providerRegistry.getEnabledIds());
   const { startDate, endDate, type } = req.query as {
     startDate?: string;
     endDate?: string;
@@ -147,23 +154,25 @@ export async function getUsageHistory(req: AuthenticatedRequest, res: Response):
     );
 
     res.json({
-      data: rows.map((r) => {
-        const billing = normalizeTaskBilling({
-          providerId: r.provider_id,
-          creditCost: r.credit_cost,
-          powerCost: r.power_cost,
-          status: r.status,
-        });
-        return {
-        taskId: r.task_id,
-        type: r.type,
-        prompt: r.prompt ? r.prompt.slice(0, 50) : null,
-        creditsUsed: billing.creditCost,
-        powerUsed: billing.powerCost,
-        createdAt: r.created_at,
-        status: r.status,
-        };
-      }),
+      data: rows
+        .filter((row) => enabledProviderIds.has(row.provider_id))
+        .map((r) => {
+          const billing = normalizeTaskBilling({
+            providerId: r.provider_id,
+            creditCost: r.credit_cost,
+            powerCost: r.power_cost,
+            status: r.status,
+          });
+          return {
+            taskId: r.task_id,
+            type: r.type,
+            prompt: r.prompt ? r.prompt.slice(0, 50) : null,
+            creditsUsed: billing.creditCost,
+            powerUsed: billing.powerCost,
+            createdAt: r.created_at,
+            status: r.status,
+          };
+        }),
     });
   } catch (err) {
     console.error('[UsageController] GET /usage/history error:', err);
