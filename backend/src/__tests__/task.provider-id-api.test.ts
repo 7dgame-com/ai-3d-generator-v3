@@ -3,6 +3,7 @@ import { getTask, listTasks } from '../controllers/task';
 
 const mockQuery = jest.fn();
 const mockIsDownloadExpired = jest.fn();
+const mockGetEnabledIds = jest.fn(() => ['tripo3d', 'hyper3d']);
 
 jest.mock('../db/connection', () => ({
   query: (...args: unknown[]) => mockQuery(...args),
@@ -18,6 +19,12 @@ jest.mock('../utils/urlExpiry', () => {
     isDownloadExpired: (...args: unknown[]) => mockIsDownloadExpired(...args),
   };
 });
+
+jest.mock('../adapters/ProviderRegistry', () => ({
+  providerRegistry: {
+    getEnabledIds: () => mockGetEnabledIds(),
+  },
+}));
 
 function createResponse() {
   const payload: { body?: unknown } = {};
@@ -35,7 +42,63 @@ function createResponse() {
 describe('Feature: hyper3d-gen2-upgrade, task controller providerId fields', () => {
   beforeEach(() => {
     jest.clearAllMocks();
+    mockGetEnabledIds.mockReturnValue(['tripo3d', 'hyper3d']);
     mockIsDownloadExpired.mockReturnValue(false);
+  });
+
+  it('limits GET /tasks to enabled provider ids in the SQL query', async () => {
+    mockGetEnabledIds.mockReturnValue(['tripo3d']);
+    mockQuery
+      .mockResolvedValueOnce([])
+      .mockResolvedValueOnce([
+        {
+          task_id: 'task-001',
+          provider_id: 'tripo3d',
+          provider_status_key: null,
+          type: 'text_to_model',
+          prompt: 'chair',
+          status: 'success',
+          progress: 100,
+          credit_cost: 30,
+          power_cost: 1,
+          file_size: null,
+          output_url: 'https://cdn.example.com/model.glb',
+          thumbnail_url: null,
+          resource_id: null,
+          error_message: null,
+          created_at: '2026-04-08T00:00:00.000Z',
+          completed_at: '2026-04-08T00:01:00.000Z',
+          expires_at: '2026-04-10T00:01:00.000Z',
+        },
+      ])
+      .mockResolvedValueOnce([{ total: 1 }]);
+
+    const req = {
+      query: {},
+      user: { userId: 1 },
+    } as unknown as Parameters<typeof listTasks>[0];
+    const { res } = createResponse();
+
+    await listTasks(req, res);
+
+    expect(mockQuery.mock.calls[1]?.[0]).toContain('provider_id IN');
+    expect(mockQuery.mock.calls[1]?.[1]).toEqual(expect.arrayContaining(['tripo3d']));
+  });
+
+  it('limits GET /tasks/:taskId to enabled provider ids in the SQL query', async () => {
+    mockGetEnabledIds.mockReturnValue(['tripo3d']);
+    mockQuery.mockResolvedValueOnce([]);
+
+    const req = {
+      params: { taskId: 'task-002' },
+      user: { userId: 1 },
+    } as unknown as Parameters<typeof getTask>[0];
+    const { res } = createResponse();
+
+    await getTask(req, res);
+
+    expect(mockQuery.mock.calls[0]?.[0]).toContain('provider_id IN');
+    expect(mockQuery.mock.calls[0]?.[1]).toEqual(expect.arrayContaining(['tripo3d']));
   });
 
   it('returns providerId from GET /tasks', async () => {

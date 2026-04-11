@@ -1,7 +1,7 @@
 export default {
   pluginMeta: {
     name: 'AI 3D 生成器 V3',
-    description: '基于 Tripo3D、Hyper3D 和 COS 的独立 3D 生成插件',
+    description: '基于 3D 生成服务与 COS 的独立 3D 生成插件',
     groupName: '实用工具',
   },
   common: {
@@ -82,6 +82,11 @@ export default {
     compatCycleHours: '周期（小时）',
     compatRechargeValidationPercent: '钱包百分比与池塘百分比之和必须为 100%',
     compatRechargeValidationDuration: '总时长必须大于 0 且不能短于周期',
+    compatSummarySplit: '分配比例',
+    compatSummaryDuration: '时长 / 周期',
+    compatAllocationTitle: '额度分配',
+    compatScheduleTitle: '时间配置',
+    compatPreviewDockTitle: '执行预览',
     compatPreviewWallet: '钱包',
     compatPreviewPool: '池塘',
     compatPreviewTotalHours: '总时长',

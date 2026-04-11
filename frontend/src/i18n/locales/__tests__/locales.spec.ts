@@ -33,6 +33,16 @@ describe('locale packs', () => {
     expect(locale).not.toBe(zhCN)
   })
 
+  it.each([
+    ['zh-CN', zhCN.pluginMeta.description],
+    ['zh-TW', zhTW.pluginMeta.description],
+    ['en-US', enUS.pluginMeta.description],
+    ['ja-JP', jaJP.pluginMeta.description],
+    ['th-TH', thTH.pluginMeta.description],
+  ])('%s uses provider-neutral plugin copy', (_localeName, description) => {
+    expect(description).not.toMatch(/Tripo3D|Hyper3D/i)
+  })
+
   it('zh-CN defines the compatibility recharge locale keys', () => {
     const keys = collectKeyPaths(zhCN)
 
@@ -44,5 +54,15 @@ describe('locale packs', () => {
     expect(keys).toContain('admin.compatRechargeValidationDuration')
     expect(keys).toContain('admin.compatPreviewWallet')
     expect(keys).toContain('admin.compatPreviewCycleHours')
+  })
+
+  it('zh-CN defines the unified admin console locale keys', () => {
+    const keys = collectKeyPaths(zhCN)
+
+    expect(keys).toContain('admin.compatSummarySplit')
+    expect(keys).toContain('admin.compatSummaryDuration')
+    expect(keys).toContain('admin.compatAllocationTitle')
+    expect(keys).toContain('admin.compatScheduleTitle')
+    expect(keys).toContain('admin.compatPreviewDockTitle')
   })
 })

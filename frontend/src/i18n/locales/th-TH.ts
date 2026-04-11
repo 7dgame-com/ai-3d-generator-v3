@@ -1,7 +1,7 @@
 export default {
   pluginMeta: {
     name: 'AI 3D Generator V3',
-    description: 'ปลั๊กอินสร้างโมเดล 3D แบบแยกอิสระที่ขับเคลื่อนด้วย Tripo3D, Hyper3D และ COS',
+    description: 'ปลั๊กอินสร้างโมเดล 3D แบบแยกอิสระที่ขับเคลื่อนด้วยบริการสร้าง 3D และ COS',
     groupName: 'เครื่องมือ',
   },
   common: {
@@ -82,6 +82,11 @@ export default {
     compatCycleHours: 'รอบเวลา (ชั่วโมง)',
     compatRechargeValidationPercent: 'เปอร์เซ็นต์กระเป๋าและพูลต้องรวมกันเป็น 100%',
     compatRechargeValidationDuration: 'ระยะเวลารวมต้องมากกว่า 0 และต้องไม่น้อยกว่ารอบเวลา',
+    compatSummarySplit: 'สัดส่วนการจัดสรร',
+    compatSummaryDuration: 'ระยะเวลา / รอบ',
+    compatAllocationTitle: 'การจัดสรรพลังงาน',
+    compatScheduleTitle: 'การตั้งค่าเวลา',
+    compatPreviewDockTitle: 'พรีวิวก่อนดำเนินการ',
     compatPreviewWallet: 'กระเป๋า',
     compatPreviewPool: 'พูล',
     compatPreviewTotalHours: 'ระยะเวลารวม',

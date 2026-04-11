@@ -17,10 +17,26 @@ import { normalizeTaskBilling } from '../utils/taskBilling';
 
 export const adminRouter = Router();
 
+function resolveAdminProviderId(rawProviderId: unknown): string | null {
+  const providerId = typeof rawProviderId === 'string' && rawProviderId.length > 0
+    ? rawProviderId
+    : providerRegistry.getDefaultId();
+
+  if (!providerId || !providerRegistry.isEnabled(providerId)) {
+    return null;
+  }
+
+  return providerId;
+}
+
 // ─── GET /backend/admin/config ───────────────────────────────────────────────
 
 adminRouter.get('/config', async (req: Request, res: Response): Promise<void> => {
-  const providerId = (req.query.provider_id as string | undefined) ?? 'tripo3d';
+  const providerId = resolveAdminProviderId(req.query.provider_id);
+  if (!providerId) {
+    res.status(422).json({ code: 'INVALID_PROVIDER', message: '无效或未启用的服务提供商' });
+    return;
+  }
   const configKey = `${providerId}_api_key`;
 
   try {
@@ -55,11 +71,16 @@ adminRouter.get('/config', async (req: Request, res: Response): Promise<void> =>
 
 adminRouter.put('/config', async (req: Request, res: Response): Promise<void> => {
   const { apiKey, provider_id: rawProviderId } = req.body as { apiKey?: string; provider_id?: string };
-  const providerId = rawProviderId ?? 'tripo3d';
+  const providerId = resolveAdminProviderId(rawProviderId);
 
   // 格式验证
   if (!apiKey || typeof apiKey !== 'string') {
     res.status(422).json({ code: 4001, message: '参数错误', errors: ['apiKey 不能为空'] });
+    return;
+  }
+
+  if (!providerId) {
+    res.status(422).json({ code: 'INVALID_PROVIDER', message: '无效或未启用的服务提供商' });
     return;
   }
 
@@ -111,7 +132,11 @@ adminRouter.put('/config', async (req: Request, res: Response): Promise<void> =>
 // ─── GET /backend/admin/balance ──────────────────────────────────────────────
 
 adminRouter.get('/balance', async (req: Request, res: Response): Promise<void> => {
-  const providerId = (req.query.provider_id as string | undefined) ?? 'tripo3d';
+  const providerId = resolveAdminProviderId(req.query.provider_id);
+  if (!providerId) {
+    res.status(422).json({ code: 'INVALID_PROVIDER', message: '无效或未启用的服务提供商' });
+    return;
+  }
   const configKey = `${providerId}_api_key`;
 
   const adapter = providerRegistry.get(providerId);
@@ -167,6 +192,7 @@ adminRouter.get('/providers', (_req: Request, res: Response): void => {
 
 adminRouter.get('/usage', async (_req: Request, res: Response): Promise<void> => {
   try {
+    const enabledProviderIds = new Set(providerRegistry.getEnabledIds());
     const successRows = await query<
       Array<{ user_id: number; provider_id: string; credit_cost: number; power_cost: number; created_at: string }>
     >(
@@ -181,6 +207,10 @@ adminRouter.get('/usage', async (_req: Request, res: Response): Promise<void> =>
     const dailyTrendMap = new Map<string, { credits: number; power: number }>();
 
     for (const row of successRows) {
+      if (!enabledProviderIds.has(row.provider_id)) {
+        continue;
+      }
+
       const billing = normalizeTaskBilling({
         providerId: row.provider_id,
         creditCost: row.credit_cost,

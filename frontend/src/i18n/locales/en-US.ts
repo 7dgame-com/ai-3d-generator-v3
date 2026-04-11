@@ -1,7 +1,7 @@
 export default {
   pluginMeta: {
     name: 'AI 3D Generator V3',
-    description: 'Standalone 3D generation plugin powered by Tripo3D, Hyper3D and COS',
+    description: 'Standalone 3D generation plugin powered by 3D generation services and COS',
     groupName: 'Tools',
   },
   common: {
@@ -82,6 +82,11 @@ export default {
     compatCycleHours: 'Cycle (hours)',
     compatRechargeValidationPercent: 'Wallet and pool percentages must add up to 100%',
     compatRechargeValidationDuration: 'Total duration must be greater than 0 and not shorter than the cycle',
+    compatSummarySplit: 'Allocation Split',
+    compatSummaryDuration: 'Duration / Cycle',
+    compatAllocationTitle: 'Power Allocation',
+    compatScheduleTitle: 'Schedule Setup',
+    compatPreviewDockTitle: 'Execution Preview',
     compatPreviewWallet: 'Wallet',
     compatPreviewPool: 'Pool',
     compatPreviewTotalHours: 'Total Duration',
