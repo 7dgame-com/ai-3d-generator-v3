@@ -94,6 +94,11 @@ function pluginManifestPlugin() {
 }
 
 const proxyConfig = {
+  '/api-config/': {
+    target: 'http://localhost:8088',
+    changeOrigin: true,
+    rewrite: (path: string) => path.replace(/^\/api-config/, '')
+  },
   '/api/': {
     target: 'http://localhost:8081',
     changeOrigin: true,

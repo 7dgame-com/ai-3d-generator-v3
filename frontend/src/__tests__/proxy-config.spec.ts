@@ -3,6 +3,17 @@ import path from 'node:path'
 import { describe, expect, it } from 'vitest'
 
 describe('provider reverse proxy config', () => {
+  it('proxies shared plugin permission requests through api-config in dev and preview', () => {
+    const viteConfigPath = path.resolve(__dirname, '../../vite.config.ts')
+    const viteConfig = fs.readFileSync(viteConfigPath, 'utf-8')
+
+    expect(viteConfig).toContain("'/api-config/': {")
+    expect(viteConfig).toContain("target: 'http://localhost:8088'")
+    expect(viteConfig).toContain("rewrite: (path: string) => path.replace(/^\\/api-config/, '')")
+    expect(viteConfig).toContain('preview: {')
+    expect(viteConfig).toContain('proxy: proxyConfig')
+  })
+
   it('rewrites plugin backend requests to the backend root paths', () => {
     const viteConfigPath = path.resolve(__dirname, '../../vite.config.ts')
     const viteConfig = fs.readFileSync(viteConfigPath, 'utf-8')

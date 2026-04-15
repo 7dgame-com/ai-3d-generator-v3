@@ -3,6 +3,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 const mockBackendPost = vi.fn()
 const mockBackendGet = vi.fn()
 const mockBackendPut = vi.fn()
+const mockPluginGet = vi.fn()
 const mockMainGet = vi.fn()
 const mockMainPost = vi.fn()
 const mockMainPut = vi.fn()
@@ -33,6 +34,7 @@ describe('frontend api module', () => {
     mockBackendPost.mockReset()
     mockBackendGet.mockReset()
     mockBackendPut.mockReset()
+    mockPluginGet.mockReset()
     mockMainGet.mockReset()
     mockMainPost.mockReset()
     mockMainPut.mockReset()
@@ -40,6 +42,7 @@ describe('frontend api module', () => {
 
     mockAxiosCreate
       .mockReturnValueOnce(createMockInstance(mockBackendPost, mockBackendGet, mockBackendPut))
+      .mockReturnValueOnce(createMockInstance(vi.fn(), mockPluginGet, vi.fn()))
       .mockReturnValueOnce(createMockInstance(mockMainPost, mockMainGet, mockMainPut))
   })
 
@@ -99,5 +102,37 @@ describe('frontend api module', () => {
       total_duration: 10080,
       cycle_duration: 1440,
     })
+  })
+
+  it('loads allowed actions from the shared api-config plugin endpoint', async () => {
+    mockPluginGet.mockResolvedValue({ data: { data: { actions: ['generate-model'] } } })
+
+    const { getAllowedActions } = await import('../index')
+
+    await getAllowedActions()
+
+    expect(mockPluginGet).toHaveBeenCalledWith('/allowed-actions', {
+      params: { plugin_name: 'ai-3d-generator-v3' },
+    })
+    expect(mockMainGet).not.toHaveBeenCalledWith(
+      '/v1/plugin/allowed-actions',
+      expect.anything()
+    )
+  })
+
+  it('verifies tokens through the shared api-config plugin endpoint', async () => {
+    mockPluginGet.mockResolvedValue({ data: { code: 0, data: { id: 3 } } })
+
+    const { verifyToken } = await import('../index')
+
+    await verifyToken()
+
+    expect(mockPluginGet).toHaveBeenCalledWith('/verify-token', {
+      params: { plugin_name: 'ai-3d-generator-v3' },
+    })
+    expect(mockMainGet).not.toHaveBeenCalledWith(
+      '/v1/plugin/verify-token',
+      expect.anything()
+    )
   })
 })

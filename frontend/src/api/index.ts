@@ -13,6 +13,12 @@ export const backendApi = axios.create({
   headers: { 'Content-Type': 'application/json' },
 })
 
+export const pluginApi = axios.create({
+  baseURL: '/api-config/api/v1/plugin',
+  timeout: 20000,
+  headers: { 'Content-Type': 'application/json' },
+})
+
 export const mainApi = axios.create({
   baseURL: '/api',
   timeout: 20000,
@@ -105,6 +111,7 @@ function setupInterceptors(instance: AxiosInstance) {
 }
 
 setupInterceptors(backendApi)
+setupInterceptors(pluginApi)
 setupInterceptors(mainApi)
 
 export type TaskStatus = 'queued' | 'processing' | 'success' | 'failed' | 'timeout'
@@ -305,12 +312,12 @@ export const getUsageHistory = (params?: {
 }) => backendApi.get<{ data: UsageHistoryItem[] }>('/usage/history', { params })
 
 export const verifyToken = () =>
-  mainApi.get('/v1/plugin/verify-token', {
+  pluginApi.get('/verify-token', {
     params: { plugin_name: 'ai-3d-generator-v3' },
   })
 
 export const getAllowedActions = () =>
-  mainApi.get('/v1/plugin/allowed-actions', {
+  pluginApi.get('/allowed-actions', {
     params: { plugin_name: 'ai-3d-generator-v3' },
   })
 
