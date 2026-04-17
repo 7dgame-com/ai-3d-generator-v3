@@ -55,6 +55,18 @@ function toMysqlDateTime(date: Date): string {
   return date.toISOString().slice(0, 19).replace('T', ' ');
 }
 
+function buildEnabledProviderFilter(): { clause: string; params: string[] } | null {
+  const providerIds = providerRegistry.getEnabledIds();
+  if (providerIds.length === 0) {
+    return null;
+  }
+
+  return {
+    clause: `provider_id IN (${providerIds.map(() => '?').join(', ')})`,
+    params: providerIds,
+  };
+}
+
 async function backfillMissingExpiresAtForUser(userId: number): Promise<void> {
   const rows = await query<MissingExpiresAtRow[]>(
     `SELECT task_id, output_url, thumbnail_url, completed_at
@@ -128,10 +140,10 @@ export async function createTask(req: Request, res: Response): Promise<void> {
     type?: string; prompt?: string; imageBase64?: string; mimeType?: string; provider_id?: string;
   };
 
-  const providerId = rawProviderId ?? 'tripo3d';
+  const providerId = rawProviderId ?? providerRegistry.getDefaultId();
 
   // Validate provider_id
-  if (!providerRegistry.isEnabled(providerId)) {
+  if (!providerId || !providerRegistry.isEnabled(providerId)) {
     res.status(422).json({ code: 'INVALID_PROVIDER', message: '无效或未启用的服务提供商' });
     return;
   }
@@ -289,22 +301,30 @@ export async function listTasks(req: Request, res: Response): Promise<void> {
   const offset = (page - 1) * pageSize;
   try {
     await backfillMissingExpiresAtForUser(userId);
+    const providerFilter = buildEnabledProviderFilter();
+
+    if (!providerFilter) {
+      res.json({ data: [], total: 0, page, pageSize });
+      return;
+    }
 
     const rows = await query<Array<Record<string, unknown>>>(
       `SELECT task_id, provider_id, provider_status_key, type, prompt, status, progress, credit_cost, power_cost, file_size, output_url, thumbnail_url, resource_id, error_message, created_at, completed_at, expires_at
        FROM tasks
        WHERE user_id = ?
+         AND ${providerFilter.clause}
          AND (${LIST_VISIBLE_TASKS_PREDICATE})
        ORDER BY created_at DESC
        LIMIT ? OFFSET ?`,
-      [userId, pageSize, offset]
+      [userId, ...providerFilter.params, pageSize, offset]
     );
     const countRows = await query<Array<{ total: number }>>(
       `SELECT COUNT(*) AS total
        FROM tasks
        WHERE user_id = ?
+         AND ${providerFilter.clause}
          AND (${LIST_VISIBLE_TASKS_PREDICATE})`,
-      [userId]
+      [userId, ...providerFilter.params]
     );
     res.json({
       data: rows.map((row) => {
@@ -356,9 +376,20 @@ export async function getTask(req: Request, res: Response): Promise<void> {
   const userId = (req as AuthenticatedRequest).user.userId;
   const { taskId } = req.params;
   try {
+    const providerFilter = buildEnabledProviderFilter();
+    if (!providerFilter) {
+      res.status(404).json({ code: 4004, message: '任务不存在' });
+      return;
+    }
+
     const rows = await query<Array<Record<string, unknown>>>(
-      'SELECT task_id, provider_id, provider_status_key, type, prompt, status, progress, credit_cost, power_cost, file_size, output_url, thumbnail_url, resource_id, error_message, created_at, completed_at, expires_at FROM tasks WHERE task_id = ? AND user_id = ? LIMIT 1',
-      [taskId, userId]
+      `SELECT task_id, provider_id, provider_status_key, type, prompt, status, progress, credit_cost, power_cost, file_size, output_url, thumbnail_url, resource_id, error_message, created_at, completed_at, expires_at
+       FROM tasks
+       WHERE task_id = ?
+         AND user_id = ?
+         AND ${providerFilter.clause}
+       LIMIT 1`,
+      [taskId, userId, ...providerFilter.params]
     );
     if (!rows || rows.length === 0) { res.status(404).json({ code: 4004, message: '任务不存在' }); return; }
     const row = rows[0];

@@ -359,6 +359,13 @@ const totalWallet = computed(() => quotaStatus.value?.wallet_balance ?? 0)
 const totalPool = computed(() => quotaStatus.value?.pool_balance ?? 0)
 const totalBaseline = computed(() => quotaStatus.value?.pool_baseline ?? 0)
 const totalQuota = computed(() => totalWallet.value + totalPool.value)
+const providerConsoleTotalPower = computed(() =>
+  Number(
+    providers.value
+      .reduce((sum, provider) => sum + (balances[provider]?.availablePower ?? 0), 0)
+      .toFixed(2)
+  )
+)
 const maxWalletBalance = computed(() => Math.max(1, quotaStatus.value?.wallet_balance ?? 0))
 const maxTrendPower = computed(() =>
   Math.max(1, ...(adminUsage.value?.dailyTrend ?? []).map((item) => item.power))
@@ -529,11 +536,7 @@ async function loadQuotaStatus(showSuccess = true) {
 }
 
 function openCompatRechargeModal() {
-  const totalPower =
-    (balances.tripo3d?.availablePower ?? 0) +
-    (balances.hyper3d?.availablePower ?? 0)
-
-  compatRechargeForm.totalPower = Number(totalPower.toFixed(2))
+  compatRechargeForm.totalPower = providerConsoleTotalPower.value
   showCompatRechargeModal.value = true
 }
 

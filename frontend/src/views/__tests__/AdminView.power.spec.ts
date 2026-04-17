@@ -34,6 +34,14 @@ describe('AdminView power wiring', () => {
     expect(source).not.toContain('targetUserId')
   })
 
+  it('derives compat recharge total from the loaded provider list instead of fixed provider keys', () => {
+    expect(source).toMatch(
+      /providers\.value\s*\.reduce\(\(sum, provider\) => sum \+ \(balances\[provider\]\?\.availablePower \?\? 0\), 0\)/
+    )
+    expect(source).not.toContain('(balances.tripo3d?.availablePower ?? 0) +')
+    expect(source).not.toContain('balances.hyper3d?.availablePower')
+  })
+
   it('keeps provider controls in the ops panel but removes provider_id and userId from recharge payloads', () => {
     expect(source).toContain('loadBalance(provider)')
     expect(source).not.toContain('rechargeForm.provider_id')

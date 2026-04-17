@@ -11,6 +11,7 @@ const mockSleep = jest.fn();
 const mockComputeThrottleDelay = jest.fn();
 const mockProviderCreateTask = jest.fn();
 const mockIsDownloadExpired = jest.fn();
+const mockGetEnabledIds = jest.fn(() => ['tripo3d', 'hyper3d']);
 
 jest.mock('../db/connection', () => ({
   query: (...args: unknown[]) => mockQuery(...args),
@@ -40,7 +41,9 @@ jest.mock('../services/sitePowerManager', () => ({
 
 jest.mock('../adapters/ProviderRegistry', () => ({
   providerRegistry: {
-    isEnabled: jest.fn(() => true),
+    isEnabled: jest.fn((providerId: string) => mockGetEnabledIds().includes(providerId)),
+    getEnabledIds: () => mockGetEnabledIds(),
+    getDefaultId: jest.fn(() => mockGetEnabledIds()[0] ?? null),
     get: jest.fn(() => ({
       createTask: (...args: unknown[]) => mockProviderCreateTask(...args),
     })),
@@ -81,6 +84,7 @@ function createLockedAccountConnection(row: Record<string, unknown>) {
 describe('task controller power fields', () => {
   beforeEach(() => {
     jest.clearAllMocks();
+    mockGetEnabledIds.mockReturnValue(['tripo3d', 'hyper3d']);
     mockDecrypt.mockReturnValue('real-api-key');
     mockComputeThrottleDelay.mockReturnValue(0);
     mockSleep.mockResolvedValue(undefined);
@@ -212,6 +216,40 @@ describe('task controller power fields', () => {
     expect(lockedConn.query).toHaveBeenCalledWith(
       expect.stringContaining('FROM site_power_accounts'),
       []
+    );
+  });
+
+  it('falls back to the first enabled provider when createTask omits provider_id', async () => {
+    mockGetEnabledIds.mockReturnValue(['hyper3d']);
+    const lockedConn = createLockedAccountConnection({
+      wallet_balance: '2.00',
+      pool_balance: '0.00',
+      pool_baseline: '0.00',
+      next_cycle_at: null,
+    });
+    mockPoolGetConnection.mockResolvedValue(lockedConn);
+    mockQuery
+      .mockResolvedValueOnce([{ value: 'encrypted-key' }])
+      .mockResolvedValueOnce([{ value: '30000' }])
+      .mockResolvedValueOnce({ affectedRows: 1 })
+      .mockResolvedValueOnce({ affectedRows: 1 });
+
+    const req = {
+      body: {
+        type: 'image_to_model',
+        imageBase64: 'data:image/png;base64,AAA',
+        mimeType: 'image/png',
+      },
+      user: { userId: 1 },
+    } as unknown as Parameters<typeof createTask>[0];
+    const { res } = createResponse();
+
+    await createTask(req, res);
+
+    expect(mockPreDeduct).toHaveBeenCalledWith(
+      'hyper3d',
+      creditToPower('hyper3d', 0.5),
+      expect.stringMatching(/^temp:1:/)
     );
   });
 });

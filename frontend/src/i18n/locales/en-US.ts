@@ -1,7 +1,7 @@
 export default {
   pluginMeta: {
     name: 'AI 3D Generator V3',
-    description: 'Standalone 3D generation plugin powered by Tripo3D, Hyper3D and COS',
+    description: 'Standalone 3D generation plugin powered by 3D generation services and COS',
     groupName: 'Tools',
   },
   common: {

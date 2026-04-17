@@ -10,6 +10,7 @@ const mockSleep = jest.fn();
 const mockSignPrepareToken = jest.fn();
 
 const mockProviderIsEnabled = jest.fn();
+const mockGetEnabledIds = jest.fn(() => ['tripo3d']);
 
 jest.mock('../db/connection', () => ({
   query: (...args: unknown[]) => mockQuery(...args),
@@ -40,6 +41,8 @@ jest.mock('../services/prepareToken', () => ({
 jest.mock('../adapters/ProviderRegistry', () => ({
   providerRegistry: {
     isEnabled: (...args: unknown[]) => mockProviderIsEnabled(...args),
+    getEnabledIds: () => mockGetEnabledIds(),
+    getDefaultId: jest.fn(() => mockGetEnabledIds()[0] ?? null),
   },
 }));
 
@@ -73,6 +76,7 @@ function createLockedAccountConnection(row: Record<string, unknown> | null) {
 describe('directTask.prepareTask', () => {
   beforeEach(() => {
     jest.clearAllMocks();
+    mockGetEnabledIds.mockReturnValue(['tripo3d']);
     mockProviderIsEnabled.mockReturnValue(true);
     mockDecrypt.mockReturnValue('real-provider-api-key');
     mockComputeThrottleDelay.mockReturnValue(0);
@@ -153,6 +157,40 @@ describe('directTask.prepareTask', () => {
         type: 'image_to_model',
         provider_id: 'hyper3d',
       },
+      user: { userId: 11 },
+    } as unknown as Parameters<typeof prepareTask>[0];
+    const { res, payload } = createResponse();
+
+    await prepareTask(req, res);
+
+    expect(res.status).toHaveBeenCalledWith(200);
+    expect(payload.body).toEqual(
+      expect.objectContaining({
+        providerId: 'hyper3d',
+        apiBaseUrl: '/hyper',
+        mode: 'direct',
+      })
+    );
+  });
+
+  it('falls back to the first enabled provider when prepareTask omits provider_id', async () => {
+    mockGetEnabledIds.mockReturnValue(['hyper3d']);
+    mockProviderIsEnabled.mockImplementation((providerId: string) => providerId === 'hyper3d');
+    mockPoolGetConnection.mockResolvedValue(
+      createLockedAccountConnection({
+        wallet_balance: '10.00',
+        pool_balance: '5.00',
+        pool_baseline: '5.00',
+        next_cycle_at: null,
+      })
+    );
+    mockQuery
+      .mockResolvedValueOnce([{ value: 'encrypted-api-key' }])
+      .mockResolvedValueOnce([{ value: '30000' }])
+      .mockResolvedValueOnce([{ value: 'direct' }]);
+
+    const req = {
+      body: { type: 'image_to_model' },
       user: { userId: 11 },
     } as unknown as Parameters<typeof prepareTask>[0];
     const { res, payload } = createResponse();

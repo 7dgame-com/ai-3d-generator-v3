@@ -58,6 +58,17 @@ describe('ProviderRegistry', () => {
     expect(registry.get('tripo3d')).toBe(adapter);
   });
 
+  it('getDefaultId() returns the first registered provider', () => {
+    registry.register(makeAdapter('hyper3d'));
+    registry.register(makeAdapter('tripo3d'));
+
+    expect((registry as unknown as { getDefaultId: () => string | null }).getDefaultId()).toBe('hyper3d');
+  });
+
+  it('getDefaultId() returns null when no provider is enabled', () => {
+    expect((registry as unknown as { getDefaultId: () => string | null }).getDefaultId()).toBeNull();
+  });
+
   it('isEnabled() returns false for a known-name provider that is NOT registered', () => {
     // Register only tripo3d; hyper3d is a valid name but not enabled
     registry.register(makeAdapter('tripo3d'));

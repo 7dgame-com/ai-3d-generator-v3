@@ -19,6 +19,10 @@ export class ProviderRegistry {
     return Array.from(this.adapters.keys());
   }
 
+  getDefaultId(): string | null {
+    return this.getEnabledIds()[0] ?? null;
+  }
+
   isEnabled(providerId: string): boolean {
     return this.adapters.has(providerId);
   }

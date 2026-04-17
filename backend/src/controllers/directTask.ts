@@ -239,9 +239,9 @@ export async function prepareTask(req: Request, res: Response): Promise<void> {
     type?: string;
     provider_id?: string;
   };
-  const providerId = rawProviderId ?? 'tripo3d';
+  const providerId = rawProviderId ?? providerRegistry.getDefaultId();
 
-  if (!providerRegistry.isEnabled(providerId)) {
+  if (!providerId || !providerRegistry.isEnabled(providerId)) {
     res.status(422).json({ code: 'INVALID_PROVIDER', message: '无效或未启用的服务提供商' });
     return;
   }

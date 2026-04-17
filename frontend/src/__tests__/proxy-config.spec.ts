@@ -34,6 +34,20 @@ describe('provider reverse proxy config', () => {
     expect(viteConfig).toContain('proxy: proxyConfig')
   })
 
+  it('ships matching docker api-config upstream wiring for runtime permission checks', () => {
+    const entrypointPath = path.resolve(__dirname, '../../docker-entrypoint.sh')
+    const entrypoint = fs.readFileSync(entrypointPath, 'utf-8')
+    const nginxTemplatePath = path.resolve(__dirname, '../../nginx.conf.template')
+    const nginxTemplate = fs.readFileSync(nginxTemplatePath, 'utf-8')
+    const composePath = path.resolve(process.cwd(), '../../../driver/docker-compose.yml')
+    const compose = fs.readFileSync(composePath, 'utf-8')
+
+    expect(entrypoint).toContain('generate_lb_config "APP_CONFIG" "/api-config/" "config"')
+    expect(entrypoint).toContain('APP_CONFIG_${i}_URL')
+    expect(nginxTemplate).toContain('# __CONFIG_LOCATIONS__')
+    expect(compose).toContain('APP_CONFIG_1_URL=http://system-admin-backend:8088')
+  })
+
   it('registers Vite reverse proxies for Tripo3D and Hyper3D', () => {
     const viteConfigPath = path.resolve(__dirname, '../../vite.config.ts')
     const viteConfig = fs.readFileSync(viteConfigPath, 'utf-8')

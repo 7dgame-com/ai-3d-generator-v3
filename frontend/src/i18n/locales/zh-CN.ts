@@ -1,7 +1,7 @@
 export default {
   pluginMeta: {
     name: 'AI 3D 生成器 V3',
-    description: '基于 Tripo3D、Hyper3D 和 COS 的独立 3D 生成插件',
+    description: '基于 3D 生成服务与 COS 的独立 3D 生成插件',
     groupName: '实用工具',
   },
   common: {

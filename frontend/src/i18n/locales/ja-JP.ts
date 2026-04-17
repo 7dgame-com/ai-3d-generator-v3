@@ -1,7 +1,7 @@
 export default {
   pluginMeta: {
     name: 'AI 3D ジェネレーター V3',
-    description: 'Tripo3D、Hyper3D、COS を利用した独立型 3D 生成プラグイン',
+    description: '3D 生成サービスと COS を利用した独立型 3D 生成プラグイン',
     groupName: 'ユーティリティ',
   },
   common: {
