@@ -183,10 +183,12 @@ adminRouter.get('/balance', async (req: Request, res: Response): Promise<void> =
 
 // ─── GET /backend/admin/providers ────────────────────────────────────────────
 
-adminRouter.get('/providers', (_req: Request, res: Response): void => {
+export function getProvidersHandler(_req: Request, res: Response): void {
   const providers = providerRegistry.getEnabledIds();
   res.json({ providers });
-});
+}
+
+adminRouter.get('/providers', getProvidersHandler);
 
 // ─── GET /backend/admin/usage ────────────────────────────────────────────────
 

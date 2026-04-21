@@ -1,18 +1,18 @@
 /**
  * Admin 路由
  *
- * 所有路由均需要：
- *   1. auth 中间件（JWT 验证）
- *   2. requireRootUser 中间件（仅 root 可访问）
+ * Provider 列表是生成页启动数据，登录用户可读取。
+ * 其余 admin 路由均需要 auth + requireRootUser。
  */
 
-import { Router } from 'express';
+import { Router, RequestHandler } from 'express';
 import { auth } from '../middleware/auth';
 import { requireRootUser } from '../middleware/rootOnly';
-import { adminRouter } from '../controllers/admin';
+import { adminRouter, getProvidersHandler } from '../controllers/admin';
 
 const router = Router();
 
+router.get('/admin/providers', auth, getProvidersHandler as unknown as RequestHandler);
 router.use('/admin', auth, requireRootUser, adminRouter);
 
 export default router;

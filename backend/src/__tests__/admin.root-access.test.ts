@@ -60,7 +60,11 @@ describe('root-only admin access', () => {
     );
 
     expect(adminRouteSource).toContain('requireRootUser');
+    expect(adminRouteSource).toContain("router.get('/admin/providers', auth, getProvidersHandler as unknown as RequestHandler);");
     expect(adminRouteSource).toContain("router.use('/admin', auth, requireRootUser, adminRouter)");
+    expect(adminRouteSource.indexOf("router.get('/admin/providers'")).toBeLessThan(
+      adminRouteSource.indexOf("router.use('/admin'")
+    );
     expect(adminRouteSource).not.toContain('requirePermission');
     expect(creditsRouteSource).toContain('requireRootUser');
     expect(creditsRouteSource).toContain("router.get('/credits/status', auth, getSitePowerStatusHandler as unknown as RequestHandler);");
