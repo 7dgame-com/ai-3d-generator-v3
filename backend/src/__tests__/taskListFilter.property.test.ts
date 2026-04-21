@@ -20,6 +20,12 @@ jest.mock('../utils/urlExpiry', () => {
   };
 });
 
+jest.mock('../adapters/ProviderRegistry', () => ({
+  providerRegistry: {
+    getEnabledIds: () => ['tripo3d'],
+  },
+}));
+
 const NOW_MS = Date.parse('2026-04-09T00:00:00.000Z');
 const LEGACY_SUCCESS_VISIBILITY_WINDOW_MS = 24 * 60 * 60 * 1000;
 
@@ -153,8 +159,8 @@ describe('Feature: task-expiry-pagination, Property 2: 列表过期过滤正确�
             expect(sql).toContain("completed_at > DATE_SUB(NOW(), INTERVAL 24 HOUR)");
             expect(sql).toContain('ORDER BY created_at DESC');
 
-            const pageSize = params[1] as number;
-            const offset = params[2] as number;
+            const pageSize = params[params.length - 2] as number;
+            const offset = params[params.length - 1] as number;
             return visibleRows.slice(offset, offset + pageSize);
           }
 
@@ -204,8 +210,8 @@ describe('Feature: task-expiry-pagination, Property 6: 列表排序正确性', (
 
           if (sql.includes('SELECT task_id')) {
             expect(sql).toContain('ORDER BY created_at DESC');
-            const pageSize = params[1] as number;
-            const offset = params[2] as number;
+            const pageSize = params[params.length - 2] as number;
+            const offset = params[params.length - 1] as number;
             return visibleRows.slice(offset, offset + pageSize);
           }
 

@@ -19,6 +19,12 @@ jest.mock('../utils/urlExpiry', () => {
   };
 });
 
+jest.mock('../adapters/ProviderRegistry', () => ({
+  providerRegistry: {
+    getEnabledIds: () => ['tripo3d'],
+  },
+}));
+
 function createResponse() {
   const payload: { body?: unknown } = {};
   const res = {

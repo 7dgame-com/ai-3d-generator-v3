@@ -185,13 +185,21 @@ describe('PROVIDER_DISABLED — valid provider name but not enabled', () => {
   });
 });
 
-// ─── rechargeHandler: MISSING_PROVIDER ──────────────────────────────────────
+// ─── rechargeHandler: site power compatibility ──────────────────────────────
 
 describe('rechargeHandler — MISSING_PROVIDER', () => {
-  it('returns 422 with MISSING_PROVIDER when provider_id is absent', async () => {
-    // Mock creditManager to avoid DB calls
-    jest.mock('../services/creditManager', () => ({
-      creditManager: { recharge: jest.fn() },
+  it('accepts providerless global recharge requests', async () => {
+    jest.resetModules();
+    const mockRecharge = jest.fn().mockResolvedValue(undefined);
+    const mockGetAccountStatus = jest.fn().mockResolvedValue({ next_cycle_at: null });
+    jest.doMock('../services/powerManager', () => ({
+      powerManager: {
+        recharge: mockRecharge,
+        getAccountStatus: mockGetAccountStatus,
+      },
+    }));
+    jest.doMock('../services/quotaScheduler', () => ({
+      scheduleNextCycle: jest.fn(),
     }));
 
     const { rechargeHandler } = await import('../controllers/credits');
@@ -203,7 +211,6 @@ describe('rechargeHandler — MISSING_PROVIDER', () => {
       user: { userId: 1 },
       body: {
         userId: 42,
-        // provider_id intentionally omitted
         wallet_amount: 100,
         pool_amount: 50,
         total_duration: 1440,
@@ -214,15 +221,25 @@ describe('rechargeHandler — MISSING_PROVIDER', () => {
 
     await rechargeHandler(req, res);
 
-    expect(statusMock).toHaveBeenCalledWith(422);
-    expect(jsonMock).toHaveBeenCalledWith(
-      expect.objectContaining({ code: 'MISSING_PROVIDER' })
-    );
+    expect(mockRecharge).toHaveBeenCalledWith(42, {
+      wallet_amount: 100,
+      pool_amount: 50,
+      total_duration: 1440,
+      cycle_duration: 1440,
+    });
+    expect(jsonMock).toHaveBeenCalledWith({ success: true });
   });
 
-  it('returns 422 with MISSING_PROVIDER when provider_id is empty string', async () => {
-    jest.mock('../services/creditManager', () => ({
-      creditManager: { recharge: jest.fn() },
+  it('still rejects requests without userId', async () => {
+    jest.resetModules();
+    jest.doMock('../services/powerManager', () => ({
+      powerManager: {
+        recharge: jest.fn(),
+        getAccountStatus: jest.fn(),
+      },
+    }));
+    jest.doMock('../services/quotaScheduler', () => ({
+      scheduleNextCycle: jest.fn(),
     }));
 
     const { rechargeHandler } = await import('../controllers/credits');
@@ -233,8 +250,6 @@ describe('rechargeHandler — MISSING_PROVIDER', () => {
     const req: any = {
       user: { userId: 1 },
       body: {
-        userId: 42,
-        provider_id: '',
         wallet_amount: 100,
         pool_amount: 50,
         total_duration: 1440,
@@ -245,9 +260,9 @@ describe('rechargeHandler — MISSING_PROVIDER', () => {
 
     await rechargeHandler(req, res);
 
-    expect(statusMock).toHaveBeenCalledWith(422);
+    expect(statusMock).toHaveBeenCalledWith(400);
     expect(jsonMock).toHaveBeenCalledWith(
-      expect.objectContaining({ code: 'MISSING_PROVIDER' })
+      expect.objectContaining({ code: 4001 })
     );
   });
 });

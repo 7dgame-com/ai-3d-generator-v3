@@ -95,19 +95,19 @@ describe('Property 2: Account isolation', () => {
     }
   });
 
-  it('recharge on tripo3d does not touch hyper3d rows', async () => {
+  it('recharge on tripo3d does not touch provider-partitioned rows', async () => {
     await manager.recharge(1, 'tripo3d', validParams());
 
     const allValues = mockQuery.mock.calls.flatMap((c) => c[1] ?? []);
-    expect(allValues).toContain('tripo3d');
+    expect(allValues).not.toContain('tripo3d');
     expect(allValues).not.toContain('hyper3d');
   });
 
-  it('recharge on hyper3d does not touch tripo3d rows', async () => {
+  it('recharge on hyper3d does not touch provider-partitioned rows', async () => {
     await manager.recharge(1, 'hyper3d', validParams());
 
     const allValues = mockQuery.mock.calls.flatMap((c) => c[1] ?? []);
-    expect(allValues).toContain('hyper3d');
+    expect(allValues).not.toContain('hyper3d');
     expect(allValues).not.toContain('tripo3d');
   });
 
@@ -143,7 +143,7 @@ describe('Property 2: Account isolation', () => {
           await manager.recharge(userId, providerA, validParams());
 
           const allValues = mockQuery.mock.calls.flatMap((c) => c[1] ?? []);
-          expect(allValues).toContain(providerA);
+          expect(allValues).not.toContain(providerA);
           expect(allValues).not.toContain(providerB);
         }
       ),
@@ -163,42 +163,43 @@ describe('Property 4: Recharge ledger includes provider_id', () => {
     setupMockConnection();
   });
 
-  it('credit_ledger INSERT includes provider_id for tripo3d', async () => {
+  it('power_ledger INSERT omits provider_id for tripo3d recharge', async () => {
     await manager.recharge(1, 'tripo3d', validParams());
 
     const ledgerCall = mockQuery.mock.calls[2];
-    expect(ledgerCall[0]).toContain('credit_ledger');
-    expect(ledgerCall[0]).toContain('provider_id');
-    expect(ledgerCall[1]).toContain('tripo3d');
+    expect(ledgerCall[0]).toContain('power_ledger');
+    expect(ledgerCall[0]).not.toContain('provider_id');
+    expect(ledgerCall[1]).not.toContain('tripo3d');
   });
 
-  it('credit_ledger INSERT includes provider_id for hyper3d', async () => {
+  it('power_ledger INSERT omits provider_id for hyper3d recharge', async () => {
     await manager.recharge(1, 'hyper3d', validParams());
 
     const ledgerCall = mockQuery.mock.calls[2];
-    expect(ledgerCall[0]).toContain('credit_ledger');
-    expect(ledgerCall[0]).toContain('provider_id');
-    expect(ledgerCall[1]).toContain('hyper3d');
+    expect(ledgerCall[0]).toContain('power_ledger');
+    expect(ledgerCall[0]).not.toContain('provider_id');
+    expect(ledgerCall[1]).not.toContain('hyper3d');
   });
 
-  it('credit_ledger INSERT event_type is recharge', async () => {
+  it('power_ledger INSERT event_type is recharge', async () => {
     await manager.recharge(1, 'tripo3d', validParams());
 
     const ledgerCall = mockQuery.mock.calls[2];
     expect(ledgerCall[0]).toContain('recharge');
   });
 
-  it('credit_ledger INSERT provider_id matches the recharge provider', async () => {
+  it('power_ledger INSERT stores wallet amount without provider partitioning', async () => {
     await manager.recharge(42, 'hyper3d', validParams({ wallet_amount: 500 }));
 
     const ledgerCall = mockQuery.mock.calls[2];
     const values: unknown[] = ledgerCall[1];
-    // values: [userId, providerId, wallet_amount, pool_amount, note]
-    expect(values[1]).toBe('hyper3d');
+    // values: [userId, wallet_amount, pool_amount, note]
+    expect(values[1]).toBe(500);
+    expect(values).not.toContain('hyper3d');
   });
 
-  // Feature: multi-provider-credits, Property 4: Recharge ledger includes provider_id
-  it('PBT: credit_ledger INSERT always contains the provider_id used in recharge', async () => {
+  // Feature: global-power-credits, recharge ledger omits provider partitioning
+  it('PBT: power_ledger INSERT never contains the provider_id used in recharge', async () => {
     const providers = ['tripo3d', 'hyper3d'];
 
     await fc.assert(
@@ -212,9 +213,9 @@ describe('Property 4: Recharge ledger includes provider_id', () => {
           await manager.recharge(userId, providerId, validParams());
 
           const ledgerCall = mockQuery.mock.calls[2];
-          expect(ledgerCall[0]).toContain('credit_ledger');
-          expect(ledgerCall[0]).toContain('provider_id');
-          expect(ledgerCall[1]).toContain(providerId);
+          expect(ledgerCall[0]).toContain('power_ledger');
+          expect(ledgerCall[0]).not.toContain('provider_id');
+          expect(ledgerCall[1]).not.toContain(providerId);
         }
       ),
       { numRuns: 50 }

@@ -20,6 +20,12 @@ jest.mock('../utils/urlExpiry', () => {
   };
 });
 
+jest.mock('../adapters/ProviderRegistry', () => ({
+  providerRegistry: {
+    getEnabledIds: () => ['tripo3d'],
+  },
+}));
+
 function createResponse() {
   const payload: { body?: unknown } = {};
   const res = {
@@ -77,8 +83,8 @@ describe('Feature: task-expiry-pagination, Property 4: 分页参数规范化', (
             }
 
             if (sql.includes('SELECT task_id')) {
-              expect(params[1]).toBe(expectedPageSize);
-              expect(params[2]).toBe(expectedOffset);
+              expect(params[params.length - 2]).toBe(expectedPageSize);
+              expect(params[params.length - 1]).toBe(expectedOffset);
               return visibleRows.slice(expectedOffset, expectedOffset + expectedPageSize);
             }
 

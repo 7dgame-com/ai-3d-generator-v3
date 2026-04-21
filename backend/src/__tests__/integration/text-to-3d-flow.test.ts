@@ -70,6 +70,7 @@ const mockCreateTask = jest.fn();
 jest.mock('../../adapters/ProviderRegistry', () => ({
   providerRegistry: {
     isEnabled: jest.fn((providerId: string) => providerId === 'tripo3d'),
+    getEnabledIds: jest.fn(() => ['tripo3d']),
     get: jest.fn(() => ({
       providerId: 'tripo3d',
       validateApiKeyFormat: jest.fn(() => true),
@@ -165,6 +166,7 @@ describe('Integration: complete text-to-3D generation flow', () => {
     mockComputeThrottleDelay.mockReturnValue(0);
     mockSleep.mockResolvedValue(undefined);
     (providerRegistry.isEnabled as jest.Mock).mockImplementation((providerId: string) => providerId === 'tripo3d');
+    (providerRegistry.getEnabledIds as jest.Mock).mockReturnValue(['tripo3d']);
     (providerRegistry.get as jest.Mock).mockImplementation(() => ({
       providerId: 'tripo3d',
       validateApiKeyFormat: jest.fn(() => true),
@@ -250,16 +252,22 @@ describe('Integration: complete text-to-3D generation flow', () => {
     mockedQuery.mockResolvedValueOnce([
       {
         task_id: TASK_ID,
+        provider_id: 'tripo3d',
+        provider_status_key: null,
         type: 'text_to_model',
         prompt: 'a cute cat',
         status: 'queued',
         progress: 0,
         credit_cost: 0,
+        power_cost: 0,
+        file_size: null,
         output_url: null,
-        meta_id: null,
+        thumbnail_url: null,
+        resource_id: null,
         error_message: null,
         created_at: new Date().toISOString(),
         completed_at: null,
+        expires_at: null,
       },
     ]);
 
