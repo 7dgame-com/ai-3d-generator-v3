@@ -14,6 +14,10 @@ function truncateToSecond(date: Date): Date {
   return new Date(Math.floor(date.getTime() / 1000) * 1000);
 }
 
+const validDateArb = fc
+  .date({ min: new Date('2025-01-01T00:00:00.000Z'), max: new Date('2030-12-31T23:59:59.000Z') })
+  .filter((date) => !Number.isNaN(date.getTime()));
+
 function encodeCloudFrontPolicy(epochSeconds: number): string {
   const policy = JSON.stringify({
     Statement: [
@@ -90,7 +94,7 @@ describe('Feature: task-expiry-pagination, Property 1: 过期时间计算正确�
       fc.property(
         parseableOrUnsignedUrlArb,
         fc.option(parseableOrUnsignedUrlArb, { nil: null }),
-        fc.date({ min: new Date('2025-01-01T00:00:00.000Z'), max: new Date('2030-12-31T23:59:59.000Z') }),
+        validDateArb,
         (outputSpec, thumbnailSpec, completedAt) => {
           const result = computeExpiresAt(outputSpec.url, thumbnailSpec?.url ?? null, completedAt);
           const candidates = [outputSpec.parsedExpiry, thumbnailSpec?.parsedExpiry ?? null].filter(

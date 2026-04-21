@@ -40,6 +40,9 @@ function createResponse() {
 }
 
 type DbDateValue = Date | string | null;
+const validDateArb = fc
+  .date({ min: new Date('2025-01-01T00:00:00.000Z'), max: new Date('2030-12-31T23:59:59.000Z') })
+  .filter((date) => !Number.isNaN(date.getTime()));
 
 function serializeExpected(value: DbDateValue): string | null {
   if (!value) {
@@ -51,10 +54,8 @@ function serializeExpected(value: DbDateValue): string | null {
 
 const expiresValueArb: fc.Arbitrary<DbDateValue> = fc.oneof(
   fc.constant(null),
-  fc.date({ min: new Date('2025-01-01T00:00:00.000Z'), max: new Date('2030-12-31T23:59:59.000Z') }),
-  fc.date({ min: new Date('2025-01-01T00:00:00.000Z'), max: new Date('2030-12-31T23:59:59.000Z') }).map((date) =>
-    date.toISOString()
-  )
+  validDateArb,
+  validDateArb.map((date) => date.toISOString())
 );
 
 describe('Feature: task-expiry-pagination, Property 3: 响应序列化完整性', () => {
