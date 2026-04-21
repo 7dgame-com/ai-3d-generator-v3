@@ -70,7 +70,8 @@ pnpm run dev
 
 - `/api/` -> `http://localhost:8081`
 - `/backend/` -> `http://localhost:8089`
-- `/tripo/` -> `https://api.tripo3d.ai/v2/openapi`
+- `/tripo/` -> `https://api.tripo3d.com/v2/openapi`
+- `/tripo-alt/` -> `https://api.tripo3d.ai/v2/openapi`
 - `/hyper/` -> `https://api.hyper3d.com/api/v2`
 
 如果你想把插件后端也切到本地开发，可以单独运行：

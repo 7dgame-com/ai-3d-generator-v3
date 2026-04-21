@@ -39,7 +39,7 @@ describe('Tripo3DAdapter image upload flow', () => {
     expect(mockedAxios.post).toHaveBeenCalledTimes(2);
 
     const [uploadUrl, uploadBody, uploadConfig] = mockedAxios.post.mock.calls[0] ?? [];
-    expect(uploadUrl).toBe('https://api.tripo3d.ai/v2/openapi/upload');
+    expect(uploadUrl).toBe('https://api.tripo3d.com/v2/openapi/upload');
     expect(typeof (uploadBody as { getHeaders?: () => Record<string, string> })?.getHeaders).toBe('function');
     expect(uploadConfig?.headers).toEqual(
       expect.objectContaining({

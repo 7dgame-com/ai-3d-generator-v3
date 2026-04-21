@@ -105,12 +105,12 @@ const proxyConfig = {
     rewrite: (path: string) => path.replace(/^\/backend/, '')
   },
   '/tripo/': {
-    target: 'https://api.tripo3d.ai',
+    target: 'https://api.tripo3d.com',
     changeOrigin: true,
     rewrite: (path: string) => path.replace(/^\/tripo/, '/v2/openapi')
   },
   '/tripo-alt/': {
-    target: 'https://api.tripo3d.com',
+    target: 'https://api.tripo3d.ai',
     changeOrigin: true,
     rewrite: (path: string) => path.replace(/^\/tripo-alt/, '/v2/openapi')
   },

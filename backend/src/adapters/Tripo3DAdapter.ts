@@ -9,8 +9,8 @@ import {
 } from './IProviderAdapter';
 
 const TRIPO_API_BASES = [
-  'https://api.tripo3d.ai/v2/openapi',
   'https://api.tripo3d.com/v2/openapi',
+  'https://api.tripo3d.ai/v2/openapi',
 ] as const;
 const TRIPO_MODEL_VERSION = process.env.TRIPO_MODEL_VERSION || 'P1-20260311';
 const TRIPO_IMAGE_FILE_TYPE = 'image';

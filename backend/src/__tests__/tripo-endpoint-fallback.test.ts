@@ -40,14 +40,14 @@ describe('Tripo3DAdapter endpoint fallback', () => {
 
     expect(mockedAxios.get).toHaveBeenNthCalledWith(
       1,
-      'https://api.tripo3d.ai/v2/openapi/user/balance',
+      'https://api.tripo3d.com/v2/openapi/user/balance',
       expect.objectContaining({
         headers: { Authorization: 'Bearer api-key' },
       })
     );
     expect(mockedAxios.get).toHaveBeenNthCalledWith(
       2,
-      'https://api.tripo3d.com/v2/openapi/user/balance',
+      'https://api.tripo3d.ai/v2/openapi/user/balance',
       expect.objectContaining({
         headers: { Authorization: 'Bearer api-key' },
       })
@@ -76,12 +76,12 @@ describe('Tripo3DAdapter endpoint fallback', () => {
     });
     expect(mockedAxios.get).toHaveBeenNthCalledWith(
       1,
-      'https://api.tripo3d.ai/v2/openapi/user/balance',
+      'https://api.tripo3d.com/v2/openapi/user/balance',
       expect.any(Object)
     );
     expect(mockedAxios.get).toHaveBeenNthCalledWith(
       2,
-      'https://api.tripo3d.com/v2/openapi/user/balance',
+      'https://api.tripo3d.ai/v2/openapi/user/balance',
       expect.any(Object)
     );
   });
@@ -114,19 +114,19 @@ describe('Tripo3DAdapter endpoint fallback', () => {
 
     expect(mockedAxios.post).toHaveBeenNthCalledWith(
       1,
-      'https://api.tripo3d.ai/v2/openapi/upload',
-      expect.anything(),
-      expect.any(Object)
-    );
-    expect(mockedAxios.post).toHaveBeenNthCalledWith(
-      2,
       'https://api.tripo3d.com/v2/openapi/upload',
       expect.anything(),
       expect.any(Object)
     );
     expect(mockedAxios.post).toHaveBeenNthCalledWith(
+      2,
+      'https://api.tripo3d.ai/v2/openapi/upload',
+      expect.anything(),
+      expect.any(Object)
+    );
+    expect(mockedAxios.post).toHaveBeenNthCalledWith(
       3,
-      'https://api.tripo3d.com/v2/openapi/task',
+      'https://api.tripo3d.ai/v2/openapi/task',
       expect.objectContaining({
         type: 'image_to_model',
       }),
@@ -134,7 +134,7 @@ describe('Tripo3DAdapter endpoint fallback', () => {
     );
     expect(result).toEqual({
       taskId: 'task-002',
-      pollingKey: 'tripo-base:https://api.tripo3d.com/v2/openapi',
+      pollingKey: 'tripo-base:https://api.tripo3d.ai/v2/openapi',
       estimatedCost: 30,
     });
   });

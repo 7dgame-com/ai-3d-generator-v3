@@ -286,8 +286,8 @@ function makeProxyTest(name: string, url: string, expectedBackend: string): Prox
 const proxyTests = ref<ProxyTestItem[]>([
   makeProxyTest('/api/ → 主后端', '/api/v1/plugin/verify-token', 'proxy_pass → 主后端 API'),
   makeProxyTest('/backend/ → 插件后端', '/backend/health', 'proxy_pass → AI 3D Generator backend'),
-  makeProxyTest('/tripo/ → Tripo3D', '/tripo/', 'proxy_pass → https://api.tripo3d.ai/v2/openapi/'),
-  makeProxyTest('/tripo-alt/ → Tripo3D 备用', '/tripo-alt/', 'proxy_pass → https://api.tripo3d.com/v2/openapi/'),
+  makeProxyTest('/tripo/ → Tripo3D', '/tripo/', 'proxy_pass → https://api.tripo3d.com/v2/openapi/'),
+  makeProxyTest('/tripo-alt/ → Tripo3D 备用', '/tripo-alt/', 'proxy_pass → https://api.tripo3d.ai/v2/openapi/'),
   makeProxyTest('/hyper/ → Hyper3D', '/hyper/', 'proxy_pass → https://api.hyper3d.com/api/v2/'),
   makeProxyTest('/health → 前端健康检查', '/health', '本地 Nginx health.json'),
   makeProxyTest('/debug-env → 调试环境', '/debug-env', '本地 Nginx debug-env.json'),

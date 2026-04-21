@@ -2,6 +2,14 @@ import fs from 'node:fs'
 import path from 'node:path'
 import { describe, expect, it } from 'vitest'
 
+function getNginxLocationBlock(template: string, location: string): string {
+  const start = template.indexOf(`location ${location} {`)
+  expect(start).toBeGreaterThanOrEqual(0)
+  const end = template.indexOf('\n    }', start)
+  expect(end).toBeGreaterThan(start)
+  return template.slice(start, end)
+}
+
 describe('provider reverse proxy config', () => {
   it('uses only main api and plugin backend proxies in dev and preview', () => {
     const viteConfigPath = path.resolve(__dirname, '../../vite.config.ts')
@@ -57,12 +65,16 @@ describe('provider reverse proxy config', () => {
     const viteConfigPath = path.resolve(__dirname, '../../vite.config.ts')
     const viteConfig = fs.readFileSync(viteConfigPath, 'utf-8')
 
-    expect(viteConfig).toContain("'/tripo/': {")
-    expect(viteConfig).toContain("target: 'https://api.tripo3d.ai'")
-    expect(viteConfig).toContain("rewrite: (path: string) => path.replace(/^\\/tripo/, '/v2/openapi')")
-    expect(viteConfig).toContain("'/tripo-alt/': {")
-    expect(viteConfig).toContain("target: 'https://api.tripo3d.com'")
-    expect(viteConfig).toContain("rewrite: (path: string) => path.replace(/^\\/tripo-alt/, '/v2/openapi')")
+    expect(viteConfig).toContain(`'/tripo/': {
+    target: 'https://api.tripo3d.com',
+    changeOrigin: true,
+    rewrite: (path: string) => path.replace(/^\\/tripo/, '/v2/openapi')
+  }`)
+    expect(viteConfig).toContain(`'/tripo-alt/': {
+    target: 'https://api.tripo3d.ai',
+    changeOrigin: true,
+    rewrite: (path: string) => path.replace(/^\\/tripo-alt/, '/v2/openapi')
+  }`)
 
     expect(viteConfig).toContain("'/hyper/': {")
     expect(viteConfig).toContain("target: 'https://api.hyper3d.com'")
@@ -72,14 +84,19 @@ describe('provider reverse proxy config', () => {
   it('ships matching Nginx reverse proxy locations for both providers', () => {
     const templatePath = path.resolve(__dirname, '../../nginx.conf.template')
     const template = fs.readFileSync(templatePath, 'utf-8')
+    const tripoBlock = getNginxLocationBlock(template, '/tripo/')
+    const tripoAltBlock = getNginxLocationBlock(template, '/tripo-alt/')
 
-    expect(template).toContain('location /tripo/')
-    expect(template).toContain('proxy_pass https://api.tripo3d.ai/v2/openapi/')
-    expect(template).toContain('proxy_set_header Host api.tripo3d.ai')
-    expect(template).toContain("proxy_set_header Cookie ''")
-    expect(template).toContain('location /tripo-alt/')
-    expect(template).toContain('proxy_pass https://api.tripo3d.com/v2/openapi/')
-    expect(template).toContain('proxy_set_header Host api.tripo3d.com')
+    expect(tripoBlock).toContain('proxy_pass https://api.tripo3d.com/v2/openapi/')
+    expect(tripoBlock).toContain('proxy_set_header Host api.tripo3d.com')
+    expect(tripoBlock).toContain('proxy_set_header X-Forwarded-Proto https')
+    expect(tripoBlock).toContain('proxy_redirect off')
+    expect(tripoBlock).toContain("proxy_set_header Cookie ''")
+    expect(tripoAltBlock).toContain('proxy_pass https://api.tripo3d.ai/v2/openapi/')
+    expect(tripoAltBlock).toContain('proxy_set_header Host api.tripo3d.ai')
+    expect(tripoAltBlock).toContain('proxy_set_header X-Forwarded-Proto https')
+    expect(tripoAltBlock).toContain('proxy_redirect off')
+    expect(tripoAltBlock).toContain("proxy_set_header Cookie ''")
 
     expect(template).toContain('location /hyper/')
     expect(template).toContain('proxy_pass https://api.hyper3d.com/api/v2/')
