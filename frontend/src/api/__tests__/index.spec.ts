@@ -40,6 +40,7 @@ vi.mock('../../utils/token', () => ({
 describe('frontend api module', () => {
   beforeEach(() => {
     vi.resetModules()
+    vi.unstubAllGlobals()
 
     mockBackendPost.mockReset()
     mockBackendGet.mockReset()
@@ -59,6 +60,19 @@ describe('frontend api module', () => {
     mockAxiosCreate
       .mockReturnValueOnce(createMockInstance(mockBackendPost, mockBackendGet, mockBackendPut))
       .mockReturnValueOnce(createMockInstance(mockMainPost, mockMainGet, mockMainPut))
+  })
+
+  it('uses the public backend origin on the hosted a23 plugin domain', async () => {
+    vi.stubGlobal('location', { hostname: 'a23.plugins.xrugc.com' })
+
+    await import('../index')
+
+    expect(mockAxiosCreate).toHaveBeenNthCalledWith(
+      1,
+      expect.objectContaining({
+        baseURL: 'https://a23-backend.plugins.xrugc.com',
+      })
+    )
   })
 
   it('waits for the parent token before sending the first embedded request', async () => {

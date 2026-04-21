@@ -7,8 +7,21 @@ import {
   setToken,
 } from '../utils/token'
 
+function resolveBackendBaseURL(): string {
+  const configuredBaseURL = import.meta.env.VITE_BACKEND_BASE_URL
+  if (configuredBaseURL) {
+    return configuredBaseURL
+  }
+
+  if (globalThis.location?.hostname === 'a23.plugins.xrugc.com') {
+    return 'https://a23-backend.plugins.xrugc.com'
+  }
+
+  return '/backend'
+}
+
 export const backendApi = axios.create({
-  baseURL: '/backend',
+  baseURL: resolveBackendBaseURL(),
   timeout: 20000,
   headers: { 'Content-Type': 'application/json' },
 })

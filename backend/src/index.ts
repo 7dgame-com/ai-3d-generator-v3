@@ -33,6 +33,7 @@ app.use(
     origin: [
       'http://localhost:3008', // 插件前端开发服务器
       'http://localhost:3001', // 主前端开发服务器
+      'https://a23.plugins.xrugc.com', // 插件前端线上域名
     ],
     credentials: true,
   })
