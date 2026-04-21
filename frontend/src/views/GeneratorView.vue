@@ -3,9 +3,22 @@
     <section class="panel">
       <div class="panel-head">
         <h2>{{ t('generator.title') }}</h2>
-        <el-select v-model="selectedProvider" placeholder="Provider" style="width: 200px">
+        <el-select
+          v-if="providers.length > 1"
+          v-model="selectedProvider"
+          data-test="provider-select"
+          placeholder="Provider"
+          style="width: 200px"
+        >
           <el-option v-for="provider in providers" :key="provider" :label="provider" :value="provider" />
         </el-select>
+        <span
+          v-else-if="providers.length === 1"
+          data-test="single-provider-label"
+          class="single-provider-label"
+        >
+          {{ selectedProvider }}
+        </span>
       </div>
 
       <el-tabs v-model="mode">
@@ -841,6 +854,21 @@ function openMainResource(resourceId: number | null) {
   gap: 16px;
   align-items: center;
   margin-bottom: 16px;
+}
+
+.single-provider-label {
+  display: inline-flex;
+  align-items: center;
+  min-width: 200px;
+  min-height: 32px;
+  padding: 0 12px;
+  border: 1px solid #dcdfe6;
+  border-radius: 4px;
+  background: #f8fafc;
+  color: #606266;
+  font-size: 14px;
+  font-weight: 600;
+  box-sizing: border-box;
 }
 
 .task-list {
