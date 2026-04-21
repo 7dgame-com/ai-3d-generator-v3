@@ -7,7 +7,18 @@
         <p class="hero-description">{{ t('admin.dashboardSubtitle') }}</p>
       </div>
 
-      <div class="summary-grid">
+      <div v-if="heroInitialLoading" class="summary-grid" data-test="hero-skeleton">
+        <article
+          v-for="index in 5"
+          :key="`hero-skeleton-${index}`"
+          class="summary-card summary-card--skeleton"
+        >
+          <span class="skeleton-block skeleton-block--label"></span>
+          <span class="skeleton-block skeleton-block--value"></span>
+          <span class="skeleton-block skeleton-block--meta"></span>
+        </article>
+      </div>
+      <div v-else class="summary-grid">
         <article
           v-for="card in summaryCards"
           :key="card.key"
@@ -32,7 +43,43 @@
         </el-button>
       </div>
 
-      <div class="provider-grid">
+      <div v-if="providerInitialLoading" class="provider-grid" data-test="provider-skeleton">
+        <article
+          v-for="index in providerSkeletonCount"
+          :key="`provider-skeleton-${index}`"
+          class="provider-card provider-card--skeleton"
+        >
+          <div class="provider-card__top">
+            <div class="provider-card__skeleton-copy">
+              <span class="skeleton-block skeleton-block--name"></span>
+              <span class="skeleton-block skeleton-block--subtitle"></span>
+            </div>
+            <span class="status-pill status-pill--skeleton"></span>
+          </div>
+
+          <div class="provider-metrics">
+            <div class="metric-card metric-card--skeleton">
+              <span class="skeleton-block skeleton-block--label"></span>
+              <span class="skeleton-block skeleton-block--metric"></span>
+            </div>
+            <div class="metric-card metric-card--skeleton">
+              <span class="skeleton-block skeleton-block--label"></span>
+              <span class="skeleton-block skeleton-block--metric"></span>
+            </div>
+          </div>
+
+          <span class="skeleton-block skeleton-block--paragraph"></span>
+
+          <div class="provider-actions provider-actions--skeleton">
+            <span class="skeleton-block skeleton-block--input"></span>
+            <div class="actions">
+              <span class="skeleton-block skeleton-block--button"></span>
+              <span class="skeleton-block skeleton-block--button"></span>
+            </div>
+          </div>
+        </article>
+      </div>
+      <div v-else class="provider-grid">
         <article
           v-for="provider in providers"
           :key="provider"
@@ -96,7 +143,57 @@
         <el-button :loading="quotaLoading" @click="loadQuotaStatus">{{ t('admin.loadQuota') }}</el-button>
       </div>
 
-      <div v-if="quotaStatus" class="quota-console">
+      <div
+        v-if="sitePowerInitialLoading"
+        class="quota-console quota-console--skeleton"
+        data-test="site-power-skeleton"
+      >
+        <div class="quota-console__head">
+          <div class="quota-console__skeleton-copy">
+            <span class="skeleton-block skeleton-block--title"></span>
+            <span class="skeleton-block skeleton-block--subtitle"></span>
+          </div>
+          <span class="quota-status-pill status-pill--skeleton"></span>
+        </div>
+
+        <div class="quota-kpi-strip">
+          <article
+            v-for="index in 4"
+            :key="`quota-kpi-skeleton-${index}`"
+            class="quota-kpi quota-kpi--skeleton"
+          >
+            <span class="skeleton-block skeleton-block--label"></span>
+            <span class="skeleton-block skeleton-block--value"></span>
+          </article>
+        </div>
+
+        <div class="quota-console__grid">
+          <section class="pond-chamber pond-chamber--skeleton">
+            <span class="skeleton-block skeleton-block--label"></span>
+            <div class="pond-chamber__tank pond-chamber__tank--skeleton">
+              <div class="pond-chamber__fill pond-chamber__fill--skeleton"></div>
+            </div>
+          </section>
+
+          <section class="wallet-cockpit wallet-cockpit--skeleton">
+            <span class="skeleton-block skeleton-block--label"></span>
+            <div class="wallet-cockpit__reserve wallet-cockpit__reserve--skeleton">
+              <div class="wallet-cockpit__track wallet-cockpit__track--skeleton">
+                <div class="wallet-cockpit__fill wallet-cockpit__fill--skeleton"></div>
+              </div>
+              <span class="skeleton-block skeleton-block--metric"></span>
+            </div>
+
+            <dl class="wallet-cockpit__metrics wallet-cockpit__metrics--skeleton">
+              <div v-for="index in 6" :key="`quota-metric-skeleton-${index}`">
+                <dt class="skeleton-block skeleton-block--dt"></dt>
+                <dd class="skeleton-block skeleton-block--dd"></dd>
+              </div>
+            </dl>
+          </section>
+        </div>
+      </div>
+      <div v-else-if="quotaStatus" class="quota-console">
         <div class="quota-console__head">
           <div>
             <h4>{{ t('admin.quotaOverviewTitle') }}</h4>
@@ -135,6 +232,27 @@
               <strong>{{ formatPower(quotaStatus.wallet_balance) }}</strong>
             </div>
 
+            <div class="wallet-cockpit__cycle">
+              <div class="wallet-cockpit__cycle-head">
+                <span class="section-label">{{ t('admin.cycleProgress') }}</span>
+                <strong>{{ cycleProgressPercentLabel }}</strong>
+              </div>
+              <div
+                class="wallet-cockpit__track wallet-cockpit__track--cycle"
+                role="progressbar"
+                aria-valuemin="0"
+                aria-valuemax="100"
+                :aria-valuenow="cycleProgressState?.percent ?? 0"
+                :aria-valuetext="cycleProgressPercentLabel"
+                data-test="cycle-progress"
+              >
+                <div class="wallet-cockpit__fill wallet-cockpit__fill--cycle" :style="cycleProgressFillStyle">
+                  <span class="wallet-cockpit__sheen"></span>
+                </div>
+              </div>
+              <span class="wallet-cockpit__meta">{{ cycleProgressDurationLabel }}</span>
+            </div>
+
             <dl class="wallet-cockpit__metrics">
               <div>
                 <dt>{{ t('admin.poolBaseline') }}</dt>
@@ -151,6 +269,10 @@
               <div>
                 <dt>{{ t('admin.nextCycleAt') }}</dt>
                 <dd>{{ formatDateTime(quotaStatus.next_cycle_at) }}</dd>
+              </div>
+              <div>
+                <dt>{{ t('admin.cycleProgress') }}</dt>
+                <dd>{{ cycleProgressPercentLabel }}</dd>
               </div>
               <div>
                 <dt>{{ t('admin.totalDuration') }}</dt>
@@ -178,7 +300,41 @@
         </div>
       </div>
 
-      <div class="usage-grid">
+      <div v-if="usageInitialLoading" class="usage-grid usage-grid--skeleton" data-test="usage-skeleton">
+        <div class="trend-board trend-board--skeleton">
+          <div class="trend-bars trend-bars--skeleton">
+            <article
+              v-for="(height, index) in [42, 68, 51, 80, 61, 73]"
+              :key="`usage-skeleton-bar-${index}`"
+              class="trend-bar-card"
+            >
+              <div class="trend-bar-shell">
+                <div class="trend-bar-fill trend-bar-fill--skeleton" :style="{ height: `${height}%` }"></div>
+              </div>
+              <span class="skeleton-block skeleton-block--metric"></span>
+              <span class="skeleton-block skeleton-block--meta"></span>
+            </article>
+          </div>
+        </div>
+
+        <div class="ranking-board ranking-board--skeleton">
+          <h4>{{ t('admin.userRankingTitle') }}</h4>
+          <ol class="ranking-list">
+            <li
+              v-for="index in 5"
+              :key="`usage-skeleton-rank-${index}`"
+              class="ranking-item ranking-item--skeleton"
+            >
+              <div class="ranking-item__skeleton-copy">
+                <span class="skeleton-block skeleton-block--label"></span>
+                <span class="skeleton-block skeleton-block--meta"></span>
+              </div>
+              <span class="skeleton-block skeleton-block--metric"></span>
+            </li>
+          </ol>
+        </div>
+      </div>
+      <div v-else class="usage-grid">
         <div class="trend-board">
           <div v-if="trendRows.length > 0" class="trend-bars">
             <article v-for="item in trendRows" :key="item.date" class="trend-bar-card">
@@ -267,8 +423,9 @@
               <span>{{ t('admin.compatCycleHours') }}</span>
               <el-input-number
                 v-model="compatRechargeForm.cycleHours"
-                :min="1"
-                :precision="0"
+                :min="0.01"
+                :precision="2"
+                :step="0.1"
               />
             </label>
           </div>
@@ -287,11 +444,11 @@
             </div>
             <div class="preview-card">
               <span>{{ t('admin.compatPreviewTotalHours') }}</span>
-              <strong>{{ compatRechargePreview.totalHours }}h</strong>
+              <strong>{{ formatHoursDuration(compatRechargePreview.totalHours) }}</strong>
             </div>
             <div class="preview-card">
               <span>{{ t('admin.compatPreviewCycleHours') }}</span>
-              <strong>{{ compatRechargeForm.cycleHours }}h</strong>
+              <strong>{{ formatMinutesDuration(compatRechargePreview.cycleDuration) }}</strong>
             </div>
           </div>
         </aside>
@@ -314,7 +471,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, reactive, ref } from 'vue'
+import { computed, onBeforeUnmount, onMounted, reactive, ref } from 'vue'
 import { ElMessage } from 'element-plus'
 import {
   getAdminBalance,
@@ -327,6 +484,7 @@ import {
   type PowerAccountStatus,
 } from '../api'
 import { useI18n } from 'vue-i18n'
+import { getCycleProgress } from './adminCycleProgress'
 
 interface AdminUsageSnapshot {
   totalCredits: number
@@ -346,6 +504,11 @@ const quotaStatus = ref<PowerAccountStatus | null>(null)
 const quotaLoading = ref(false)
 const showCompatRechargeModal = ref(false)
 const compatRechargeLoading = ref(false)
+const cycleNowMs = ref(Date.now())
+const providerListInitialLoaded = ref(false)
+const providerDetailsInitialLoaded = ref(false)
+const adminUsageInitialLoaded = ref(false)
+const sitePowerInitialLoaded = ref(false)
 const compatRechargeForm = reactive({
   totalPower: 0,
   walletPercent: 50,
@@ -354,11 +517,23 @@ const compatRechargeForm = reactive({
   totalHours: 0,
   cycleHours: 24,
 })
+let cycleProgressTimer: number | null = null
 
 const totalWallet = computed(() => quotaStatus.value?.wallet_balance ?? 0)
 const totalPool = computed(() => quotaStatus.value?.pool_balance ?? 0)
 const totalBaseline = computed(() => quotaStatus.value?.pool_baseline ?? 0)
 const totalQuota = computed(() => totalWallet.value + totalPool.value)
+const providerInitialLoading = computed(() =>
+  !providerListInitialLoaded.value || !providerDetailsInitialLoaded.value
+)
+const usageInitialLoading = computed(() => !adminUsageInitialLoaded.value)
+const sitePowerInitialLoading = computed(() => !sitePowerInitialLoaded.value)
+const heroInitialLoading = computed(() =>
+  providerInitialLoading.value || usageInitialLoading.value || sitePowerInitialLoading.value
+)
+const providerSkeletonCount = computed(() =>
+  providerListInitialLoaded.value && providers.value.length > 0 ? providers.value.length : 2
+)
 const providerConsoleTotalPower = computed(() =>
   Number(
     providers.value
@@ -425,6 +600,7 @@ const quotaKpis = computed(() => [
 ])
 const compatRechargePreview = computed(() => {
   const totalHours = compatRechargeForm.totalDays * 24 + compatRechargeForm.totalHours
+  const cycleDuration = roundHoursToMinutes(compatRechargeForm.cycleHours)
   const walletAmount = Number(
     (compatRechargeForm.totalPower * compatRechargeForm.walletPercent / 100).toFixed(2)
   )
@@ -436,10 +612,24 @@ const compatRechargePreview = computed(() => {
     walletAmount,
     poolAmount,
     totalDuration: totalHours * 60,
-    cycleDuration: compatRechargeForm.cycleHours * 60,
+    cycleDuration,
     totalHours,
   }
 })
+const cycleProgressState = computed(() => getCycleProgress(quotaStatus.value, cycleNowMs.value))
+const cycleProgressPercentLabel = computed(() =>
+  cycleProgressState.value ? `${cycleProgressState.value.percent}%` : '--'
+)
+const cycleProgressDurationLabel = computed(() => {
+  if (!cycleProgressState.value) {
+    return '-'
+  }
+
+  return `${formatCompactDuration(cycleProgressState.value.elapsedMinutes)} / ${formatCompactDuration(cycleProgressState.value.totalMinutes)}`
+})
+const cycleProgressFillStyle = computed(() => ({
+  width: `${cycleProgressState.value?.fillPercent ?? 0}%`,
+}))
 
 const summaryCards = computed(() => [
   {
@@ -479,20 +669,21 @@ const summaryCards = computed(() => [
   },
 ])
 
-onMounted(async () => {
-  try {
-    const providerResponse = await getEnabledProviders()
-    providers.value = providerResponse.data.providers ?? []
-    await Promise.allSettled(
-      providers.value.map(async (provider) => {
-        await loadConfig(provider)
-        await loadBalance(provider)
-      })
-    )
-    adminUsage.value = (await getAdminUsage()).data
-    await loadQuotaStatus(false)
-  } catch (error) {
-    ElMessage.error(error instanceof Error ? error.message : t('admin.queryFailed'))
+onMounted(() => {
+  cycleProgressTimer = window.setInterval(() => {
+    cycleNowMs.value = Date.now()
+  }, 1000)
+
+  void Promise.allSettled([
+    loadInitialProviders(),
+    loadInitialUsage(),
+    loadQuotaStatus(false, { markInitialLoaded: true }),
+  ])
+})
+
+onBeforeUnmount(() => {
+  if (cycleProgressTimer !== null) {
+    window.clearInterval(cycleProgressTimer)
   }
 })
 
@@ -509,6 +700,43 @@ async function loadBalance(provider: string) {
   }
 }
 
+async function loadInitialProviders() {
+  try {
+    const providerResponse = await getEnabledProviders()
+    providers.value = providerResponse.data.providers ?? []
+  } catch (error) {
+    ElMessage.error(error instanceof Error ? error.message : t('admin.queryFailed'))
+  } finally {
+    providerListInitialLoaded.value = true
+  }
+
+  if (providers.value.length === 0) {
+    providerDetailsInitialLoaded.value = true
+    return
+  }
+
+  await Promise.allSettled(
+    providers.value.map(async (provider) => {
+      try {
+        await Promise.all([loadConfig(provider), loadBalance(provider)])
+      } catch (error) {
+        ElMessage.error(error instanceof Error ? error.message : t('admin.queryFailed'))
+      }
+    })
+  )
+  providerDetailsInitialLoaded.value = true
+}
+
+async function loadInitialUsage() {
+  try {
+    adminUsage.value = (await getAdminUsage()).data
+  } catch (error) {
+    ElMessage.error(error instanceof Error ? error.message : t('admin.queryFailed'))
+  } finally {
+    adminUsageInitialLoaded.value = true
+  }
+}
+
 async function save(provider: string) {
   try {
     await saveAdminConfig(draftKeys[provider], provider)
@@ -520,7 +748,7 @@ async function save(provider: string) {
   }
 }
 
-async function loadQuotaStatus(showSuccess = true) {
+async function loadQuotaStatus(showSuccess = true, options: { markInitialLoaded?: boolean } = {}) {
   quotaLoading.value = true
   try {
     const response = await getSitePowerStatus()
@@ -532,6 +760,9 @@ async function loadQuotaStatus(showSuccess = true) {
     ElMessage.error(error instanceof Error ? error.message : t('admin.queryFailed'))
   } finally {
     quotaLoading.value = false
+    if (options.markInitialLoaded) {
+      sitePowerInitialLoaded.value = true
+    }
   }
 }
 
@@ -546,8 +777,8 @@ async function submitCompatRecharge() {
     return
   }
   if (
-    compatRechargePreview.value.totalHours <= 0 ||
-    compatRechargePreview.value.totalHours < compatRechargeForm.cycleHours
+    compatRechargePreview.value.totalDuration <= 0 ||
+    compatRechargePreview.value.totalDuration < compatRechargePreview.value.cycleDuration
   ) {
     ElMessage.warning(t('admin.compatRechargeValidationDuration'))
     return
@@ -583,6 +814,28 @@ function formatDateTime(value: string | Date | null) {
 
 function formatPower(value: number) {
   return t('admin.powerValue', { value: Number(value.toFixed(2)) })
+}
+
+function roundHoursToMinutes(value: number) {
+  return Math.max(0, Math.round(value * 60))
+}
+
+function formatHoursDuration(value: number) {
+  return t('admin.durationHoursValue', { value })
+}
+
+function formatMinutesDuration(value: number) {
+  return t('admin.durationMinutesValue', { value })
+}
+
+function formatCompactDuration(totalMinutes: number) {
+  if (totalMinutes >= 60) {
+    const totalHours = totalMinutes / 60
+    const roundedHours = Number.isInteger(totalHours) ? totalHours : Number(totalHours.toFixed(1))
+    return formatHoursDuration(roundedHours)
+  }
+
+  return formatMinutesDuration(totalMinutes)
 }
 
 function formatRawCredits(value?: number) {
@@ -740,6 +993,112 @@ function trendBarStyle(power: number, maxPower: number) {
   box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.14);
 }
 
+.summary-card--skeleton,
+.provider-card--skeleton,
+.metric-card--skeleton,
+.quota-console--skeleton,
+.quota-kpi--skeleton,
+.pond-chamber--skeleton,
+.wallet-cockpit--skeleton,
+.trend-board--skeleton,
+.ranking-board--skeleton {
+  box-shadow: none;
+}
+
+.skeleton-block,
+.status-pill--skeleton {
+  position: relative;
+  display: block;
+  overflow: hidden;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.34);
+}
+
+.skeleton-block::after,
+.status-pill--skeleton::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  transform: translateX(-100%);
+  background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.58), transparent);
+  animation: skeleton-shimmer 1.5s ease-in-out infinite;
+}
+
+.skeleton-block--label {
+  width: 38%;
+  height: 12px;
+}
+
+.skeleton-block--value {
+  width: 64%;
+  height: 34px;
+}
+
+.skeleton-block--meta {
+  width: 46%;
+  height: 12px;
+}
+
+.skeleton-block--name {
+  width: 132px;
+  height: 18px;
+}
+
+.skeleton-block--subtitle {
+  width: 180px;
+  height: 12px;
+  margin-top: 10px;
+}
+
+.skeleton-block--metric {
+  width: 72px;
+  height: 18px;
+}
+
+.skeleton-block--paragraph {
+  width: 100%;
+  height: 12px;
+}
+
+.skeleton-block--input {
+  width: 100%;
+  height: 40px;
+  border-radius: 14px;
+}
+
+.skeleton-block--button {
+  width: 96px;
+  height: 38px;
+}
+
+.skeleton-block--title {
+  width: 160px;
+  height: 20px;
+}
+
+.skeleton-block--dt {
+  width: 88px;
+  height: 12px;
+}
+
+.skeleton-block--dd {
+  width: 64px;
+  height: 16px;
+  margin-left: auto;
+}
+
+.provider-card__skeleton-copy,
+.quota-console__skeleton-copy,
+.ranking-item__skeleton-copy {
+  display: grid;
+  gap: 10px;
+}
+
+.status-pill--skeleton {
+  width: 72px;
+  min-height: 28px;
+}
+
 .summary-card[data-tone='ocean'] {
   background: var(--ocean);
 }
@@ -852,6 +1211,10 @@ function trendBarStyle(power: number, maxPower: number) {
   display: grid;
   gap: 12px;
   margin-top: 18px;
+}
+
+.provider-actions--skeleton .actions {
+  margin-top: 0;
 }
 
 .provider-actions :deep(.el-input__wrapper) {
@@ -1038,6 +1401,17 @@ function trendBarStyle(power: number, maxPower: number) {
   transition: height 220ms ease;
 }
 
+.pond-chamber__tank--skeleton {
+  min-height: 286px;
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.34), rgba(255, 255, 255, 0.08)),
+    rgba(72, 191, 211, 0.18);
+}
+
+.pond-chamber__fill--skeleton {
+  height: 72%;
+}
+
 .pond-chamber__glow {
   position: absolute;
   left: 14px;
@@ -1102,6 +1476,14 @@ function trendBarStyle(power: number, maxPower: number) {
   transition: width 220ms ease;
 }
 
+.wallet-cockpit__track--skeleton {
+  background: rgba(103, 51, 18, 0.1);
+}
+
+.wallet-cockpit__fill--skeleton {
+  width: 72%;
+}
+
 .wallet-cockpit__reserve strong {
   display: block;
   margin-top: 12px;
@@ -1111,10 +1493,59 @@ function trendBarStyle(power: number, maxPower: number) {
   font-family: 'IBM Plex Mono', 'SFMono-Regular', monospace;
 }
 
+.wallet-cockpit__cycle {
+  display: grid;
+  gap: 10px;
+  padding-top: 14px;
+  border-top: 1px solid rgba(202, 97, 32, 0.14);
+}
+
+.wallet-cockpit__cycle-head {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  align-items: baseline;
+}
+
+.wallet-cockpit__cycle-head strong {
+  color: var(--ink-strong);
+  font-family: 'IBM Plex Mono', 'SFMono-Regular', monospace;
+}
+
+.wallet-cockpit__track--cycle {
+  height: 14px;
+  background: rgba(24, 116, 143, 0.12);
+}
+
+.wallet-cockpit__fill--cycle {
+  position: relative;
+  overflow: hidden;
+  background: linear-gradient(90deg, var(--pond-a), var(--pond-b));
+  transition: width 900ms linear;
+}
+
+.wallet-cockpit__sheen {
+  position: absolute;
+  inset: 0 auto 0 -30%;
+  width: 30%;
+  background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.4), transparent);
+  animation: cycle-progress-sheen 2.8s linear infinite;
+}
+
+.wallet-cockpit__meta {
+  color: var(--ink-soft);
+  font-size: 13px;
+}
+
 .wallet-cockpit__metrics {
   display: grid;
   gap: 10px;
   margin: 0;
+}
+
+.wallet-cockpit__metrics--skeleton dt,
+.wallet-cockpit__metrics--skeleton dd {
+  display: block;
 }
 
 .wallet-cockpit__metrics div {
@@ -1317,6 +1748,10 @@ function trendBarStyle(power: number, maxPower: number) {
   transition: height 220ms ease;
 }
 
+.trend-bar-fill--skeleton {
+  background: linear-gradient(180deg, rgba(148, 163, 184, 0.56), rgba(100, 116, 139, 0.9));
+}
+
 .trend-bar-card span {
   color: var(--ink-soft);
   font-size: 13px;
@@ -1346,6 +1781,26 @@ function trendBarStyle(power: number, maxPower: number) {
   margin-top: 6px;
   color: var(--ink-soft);
   font-size: 13px;
+}
+
+.ranking-item--skeleton {
+  align-items: center;
+}
+
+@keyframes cycle-progress-sheen {
+  from {
+    transform: translateX(0);
+  }
+
+  to {
+    transform: translateX(420%);
+  }
+}
+
+@keyframes skeleton-shimmer {
+  100% {
+    transform: translateX(100%);
+  }
 }
 
 @media (max-width: 960px) {
