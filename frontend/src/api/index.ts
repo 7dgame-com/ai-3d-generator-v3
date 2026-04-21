@@ -24,6 +24,7 @@ let failedQueue: Array<{
   resolve: (token: string) => void
   reject: (error: Error) => void
 }> = []
+let bootstrapTokenPromise: Promise<string | null> | null = null
 
 function processQueue(error: Error | null, token: string | null) {
   failedQueue.forEach(({ resolve, reject }) => {
@@ -36,9 +37,34 @@ function processQueue(error: Error | null, token: string | null) {
   failedQueue = []
 }
 
+async function getRequestToken(): Promise<string | null> {
+  const token = getToken()
+  if (token) return token
+
+  if (!isInIframe()) {
+    return null
+  }
+
+  if (!bootstrapTokenPromise) {
+    bootstrapTokenPromise = requestParentTokenRefresh()
+      .then((result) => {
+        const accessToken = result?.accessToken ?? getToken()
+        if (accessToken) {
+          setToken(accessToken)
+        }
+        return accessToken
+      })
+      .finally(() => {
+        bootstrapTokenPromise = null
+      })
+  }
+
+  return bootstrapTokenPromise
+}
+
 function setupInterceptors(instance: AxiosInstance) {
-  instance.interceptors.request.use((config: InternalAxiosRequestConfig) => {
-    const token = getToken()
+  instance.interceptors.request.use(async (config: InternalAxiosRequestConfig) => {
+    const token = await getRequestToken()
     if (token) {
       config.headers.Authorization = `Bearer ${token}`
     }

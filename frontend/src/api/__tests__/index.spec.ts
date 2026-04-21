@@ -7,6 +7,10 @@ const mockMainGet = vi.fn()
 const mockMainPost = vi.fn()
 const mockMainPut = vi.fn()
 const mockAxiosCreate = vi.fn()
+const mockGetToken = vi.fn()
+const mockSetToken = vi.fn()
+const mockIsInIframe = vi.fn()
+const mockRequestParentTokenRefresh = vi.fn()
 
 function createMockInstance(post = vi.fn(), get = vi.fn(), put = vi.fn()) {
   return {
@@ -26,6 +30,13 @@ vi.mock('axios', () => ({
   },
 }))
 
+vi.mock('../../utils/token', () => ({
+  getToken: mockGetToken,
+  setToken: mockSetToken,
+  isInIframe: mockIsInIframe,
+  requestParentTokenRefresh: mockRequestParentTokenRefresh,
+}))
+
 describe('frontend api module', () => {
   beforeEach(() => {
     vi.resetModules()
@@ -37,10 +48,32 @@ describe('frontend api module', () => {
     mockMainPost.mockReset()
     mockMainPut.mockReset()
     mockAxiosCreate.mockReset()
+    mockGetToken.mockReset()
+    mockSetToken.mockReset()
+    mockIsInIframe.mockReset()
+    mockRequestParentTokenRefresh.mockReset()
+    mockGetToken.mockReturnValue(null)
+    mockIsInIframe.mockReturnValue(false)
+    mockRequestParentTokenRefresh.mockResolvedValue(null)
 
     mockAxiosCreate
       .mockReturnValueOnce(createMockInstance(mockBackendPost, mockBackendGet, mockBackendPut))
       .mockReturnValueOnce(createMockInstance(mockMainPost, mockMainGet, mockMainPut))
+  })
+
+  it('waits for the parent token before sending the first embedded request', async () => {
+    mockIsInIframe.mockReturnValue(true)
+    mockRequestParentTokenRefresh.mockResolvedValueOnce({ accessToken: 'parent-token' })
+
+    await import('../index')
+
+    const backendInstance = mockAxiosCreate.mock.results[0].value
+    const requestInterceptor = backendInstance.interceptors.request.use.mock.calls[0][0]
+    const config = await requestInterceptor({ headers: {} })
+
+    expect(mockRequestParentTokenRefresh).toHaveBeenCalledTimes(1)
+    expect(mockSetToken).toHaveBeenCalledWith('parent-token')
+    expect(config.headers.Authorization).toBe('Bearer parent-token')
   })
 
   it('uses an extended timeout for prepareTask to cover backend throttle delays', async () => {
