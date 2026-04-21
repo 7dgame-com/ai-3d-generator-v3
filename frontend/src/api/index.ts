@@ -13,10 +13,6 @@ function resolveBackendBaseURL(): string {
     return configuredBaseURL
   }
 
-  if (globalThis.location?.hostname === 'a23.plugins.xrugc.com') {
-    return 'https://a23-backend.plugins.xrugc.com'
-  }
-
   return '/backend'
 }
 

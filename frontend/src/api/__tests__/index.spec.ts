@@ -62,7 +62,7 @@ describe('frontend api module', () => {
       .mockReturnValueOnce(createMockInstance(mockMainPost, mockMainGet, mockMainPut))
   })
 
-  it('uses the public backend origin on the hosted a23 plugin domain', async () => {
+  it('uses the same-origin backend proxy on the hosted a23 plugin domain', async () => {
     vi.stubGlobal('location', { hostname: 'a23.plugins.xrugc.com' })
 
     await import('../index')
@@ -70,7 +70,7 @@ describe('frontend api module', () => {
     expect(mockAxiosCreate).toHaveBeenNthCalledWith(
       1,
       expect.objectContaining({
-        baseURL: 'https://a23-backend.plugins.xrugc.com',
+        baseURL: '/backend',
       })
     )
   })
