@@ -1,28 +1,21 @@
 /**
  * Task routes
  *
- * Permissions:
- *   POST   /backend/tasks                      - generate-model
- *   GET    /backend/tasks                      - generate-model
- *   GET    /backend/tasks/:taskId              - generate-model
- *   GET    /backend/tasks/:taskId/download-url - download-model
- *   PUT    /backend/tasks/:taskId/resource     - upload-to-main
+ * Auth-only routes for self-scoped task resources.
  */
 
 import { Router } from 'express';
 import { auth } from '../middleware/auth';
-import { requirePermission } from '../middleware/permission';
-import { createTask, listTasks, getTask, getDownloadUrl, updateTaskResource } from '../controllers/task';
+import { listTasks, getTask, getDownloadUrl, updateTaskResource } from '../controllers/task';
 
 const router = Router();
 
-router.post('/', auth, requirePermission('generate-model'), createTask);
-router.get('/', auth, requirePermission('generate-model'), listTasks);
+router.get('/', auth, listTasks);
 
 // download-url must be registered before /:taskId to avoid param capture
-router.get('/:taskId/download-url', auth, requirePermission('download-model'), getDownloadUrl);
-router.get('/:taskId', auth, requirePermission('generate-model'), getTask);
+router.get('/:taskId/download-url', auth, getDownloadUrl);
+router.get('/:taskId', auth, getTask);
 
-router.put('/:taskId/resource', auth, requirePermission('upload-to-main'), updateTaskResource);
+router.put('/:taskId/resource', auth, updateTaskResource);
 
 export default router;

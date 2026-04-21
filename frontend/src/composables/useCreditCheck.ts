@@ -1,15 +1,15 @@
 import { computed, ref } from 'vue'
 import { getCreditStatus, type PowerAccountStatus } from '../api'
-import { usePermissions } from './usePermissions'
+import { useAuthSession } from './useAuthSession'
 
 export function isAllCreditsZero(status: PowerAccountStatus | null | undefined): boolean {
   return !!status && status.wallet_balance + status.pool_balance <= 0
 }
 
 export function useCreditCheck() {
-  const { can, isRootUser } = usePermissions()
+  const { isRootUser } = useAuthSession()
   const showCreditDialog = ref(false)
-  const isAdmin = computed(() => can('admin-config') && isRootUser.value)
+  const isAdmin = computed(() => isRootUser.value)
 
   async function checkCredits(): Promise<void> {
     try {

@@ -1,5 +1,6 @@
 import type { Response } from 'express';
 import { completeTask, failTask, registerTask } from '../controllers/directTask';
+import { creditToPower } from '../config/providers';
 
 const mockQuery = jest.fn();
 const mockDecrypt = jest.fn();
@@ -26,14 +27,12 @@ jest.mock('../services/prepareToken', () => ({
   signPrepareToken: jest.fn(),
 }));
 
-jest.mock('../services/creditManager', () => ({
-  creditManager: {
+jest.mock('../services/sitePowerManager', () => ({
+  sitePowerManager: {
     preDeduct: jest.fn(),
     finalizeTaskSuccess: (...args: unknown[]) => mockFinalizeTaskSuccess(...args),
     refund: (...args: unknown[]) => mockRefund(...args),
   },
-  computeThrottleDelay: jest.fn(),
-  sleep: jest.fn(),
 }));
 
 jest.mock('../utils/urlExpiry', () => ({
@@ -120,8 +119,8 @@ describe('directTask callbacks', () => {
     );
     expect(mockQuery).toHaveBeenNthCalledWith(
       2,
-      expect.stringContaining("UPDATE credit_ledger SET task_id = ?"),
-      ['provider-task-001', 'temp:5:1710000000000', 5, 'tripo3d']
+      expect.stringContaining("UPDATE site_power_ledger SET task_id = ?"),
+      ['provider-task-001', 'temp:5:1710000000000', 'tripo3d']
     );
     expect(mockAddTaskToPoller).toHaveBeenCalledWith('provider-task-001');
     expect(res.status).toHaveBeenCalledWith(200);
@@ -267,11 +266,10 @@ describe('directTask callbacks', () => {
     await completeTask(req, res);
 
     expect(mockFinalizeTaskSuccess).toHaveBeenCalledWith(
-      5,
       'tripo3d',
       'provider-task-001',
       'https://provider.example.com/model.glb',
-      1.43,
+      creditToPower('tripo3d', 30),
       30,
       'https://provider.example.com/thumb.png'
     );
@@ -335,11 +333,10 @@ describe('directTask callbacks', () => {
     await completeTask(req, res);
 
     expect(mockFinalizeTaskSuccess).toHaveBeenCalledWith(
-      5,
       'hyper3d',
       'provider-task-001',
       'https://provider.example.com/model.glb',
-      0.96,
+      creditToPower('hyper3d', 0.5),
       0.5,
       undefined
     );
@@ -365,7 +362,7 @@ describe('directTask callbacks', () => {
 
     await failTask(req, res);
 
-    expect(mockRefund).toHaveBeenCalledWith(5, 'tripo3d', 'provider-task-001');
+    expect(mockRefund).toHaveBeenCalledWith('tripo3d', 'provider-task-001');
     expect(mockQuery).toHaveBeenNthCalledWith(
       2,
       expect.stringContaining("UPDATE tasks SET status = 'failed'"),

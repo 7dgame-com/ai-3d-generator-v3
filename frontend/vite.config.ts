@@ -94,11 +94,6 @@ function pluginManifestPlugin() {
 }
 
 const proxyConfig = {
-  '/api-config/': {
-    target: 'http://localhost:8088',
-    changeOrigin: true,
-    rewrite: (path: string) => path.replace(/^\/api-config/, '')
-  },
   '/api/': {
     target: 'http://localhost:8081',
     changeOrigin: true,
@@ -113,6 +108,11 @@ const proxyConfig = {
     target: 'https://api.tripo3d.ai',
     changeOrigin: true,
     rewrite: (path: string) => path.replace(/^\/tripo/, '/v2/openapi')
+  },
+  '/tripo-alt/': {
+    target: 'https://api.tripo3d.com',
+    changeOrigin: true,
+    rewrite: (path: string) => path.replace(/^\/tripo-alt/, '/v2/openapi')
   },
   '/hyper/': {
     target: 'https://api.hyper3d.com',

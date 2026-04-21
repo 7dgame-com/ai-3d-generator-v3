@@ -1,5 +1,5 @@
-import { computed, readonly, ref } from 'vue'
-import { getAllowedActions } from '../api'
+import { computed, readonly } from 'vue'
+import { useAuthSession } from './useAuthSession'
 
 export type PermissionAction =
   | 'generate-model'
@@ -10,41 +10,18 @@ export type PermissionAction =
 
 type PermissionState = Record<PermissionAction, boolean>
 
-const permissions = ref<PermissionState>({
-  'generate-model': false,
-  'download-model': false,
-  'upload-to-main': false,
-  'view-usage': false,
-  'admin-config': false,
-})
-const roles = ref<string[]>([])
-
-const loaded = ref(false)
-const loading = ref(false)
-const isRootUser = computed(() => roles.value.includes('root'))
-
 export function usePermissions() {
-  async function fetchAllowedActions(force = false) {
-    if ((loaded.value || loading.value) && !force) {
-      return
-    }
+  const { roles, loaded, loading, isRootUser, fetchSession } = useAuthSession()
+  const permissions = computed<PermissionState>(() => ({
+    'generate-model': loaded.value,
+    'download-model': loaded.value,
+    'upload-to-main': loaded.value,
+    'view-usage': loaded.value,
+    'admin-config': loaded.value && isRootUser.value,
+  }))
 
-    loading.value = true
-    try {
-      const response = await getAllowedActions()
-      const payload =
-        (response.data as { data?: { actions?: string[]; roles?: string[] } }).data ??
-        (response.data as { actions?: string[]; roles?: string[] })
-      const actions = payload.actions ?? []
-      const wildcard = actions.includes('*')
-      roles.value = Array.isArray(payload.roles) ? payload.roles : []
-      ;(Object.keys(permissions.value) as PermissionAction[]).forEach((key) => {
-        permissions.value[key] = wildcard || actions.includes(key)
-      })
-      loaded.value = true
-    } finally {
-      loading.value = false
-    }
+  async function fetchAllowedActions(force = false) {
+    await fetchSession(force)
   }
 
   function can(action: PermissionAction) {

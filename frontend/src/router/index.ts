@@ -1,12 +1,11 @@
 import { createRouter, createWebHistory } from 'vue-router'
 import { isInIframe } from '../utils/token'
-import { usePermissions, type PermissionAction } from '../composables/usePermissions'
+import { useAuthSession } from '../composables/useAuthSession'
 
 declare module 'vue-router' {
   interface RouteMeta {
     public?: boolean
     title?: string
-    requiresPermission?: PermissionAction
     requiresRoot?: boolean
   }
 }
@@ -34,19 +33,19 @@ const router = createRouter({
           path: '',
           name: 'Generator',
           component: () => import('../views/GeneratorView.vue'),
-          meta: { title: 'AI 3D Generator', requiresPermission: 'generate-model' },
+          meta: { title: 'AI 3D Generator' },
         },
         {
           path: 'history',
           name: 'History',
           component: () => import('../views/HistoryView.vue'),
-          meta: { title: 'History', requiresPermission: 'view-usage' },
+          meta: { title: 'History' },
         },
         {
           path: 'admin',
           name: 'Admin',
           component: () => import('../views/AdminView.vue'),
-          meta: { title: 'Admin', requiresPermission: 'admin-config', requiresRoot: true },
+          meta: { title: 'Admin', requiresRoot: true },
         },
       ],
     },
@@ -58,15 +57,12 @@ router.beforeEach(async (to) => {
     return '/not-in-iframe'
   }
 
-  if (!to.meta.requiresPermission && !to.meta.requiresRoot) {
+  if (!to.meta.requiresRoot) {
     return true
   }
 
-  const { fetchAllowedActions, can, isRootUser } = usePermissions()
-  await fetchAllowedActions()
-  if (to.meta.requiresPermission && !can(to.meta.requiresPermission)) {
-    return '/no-permission'
-  }
+  const { fetchSession, isRootUser } = useAuthSession()
+  await fetchSession()
   if (to.meta.requiresRoot && !isRootUser.value) {
     return '/no-permission'
   }

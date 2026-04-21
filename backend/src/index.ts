@@ -18,7 +18,6 @@ import { tripo3dAdapter } from './adapters/Tripo3DAdapter';
 import { hyper3dAdapter } from './adapters/Hyper3DAdapter';
 import adminRoutes from './routes/admin';
 import directTaskRoutes from './routes/directTask';
-import proxyRoutes from './routes/proxy';
 import taskRoutes from './routes/task';
 import usageRoutes from './routes/usage';
 import downloadRoutes from './routes/download';
@@ -51,7 +50,6 @@ app.get('/health', (_req: Request, res: Response) => {
 // nginx rewrite 会去掉 /backend/ 前缀，所以这里挂载到根路径
 app.use('/', adminRoutes);
 app.use('/tasks', directTaskRoutes);
-app.use('/proxy', proxyRoutes);
 app.use('/tasks', taskRoutes);
 app.use('/usage', usageRoutes);
 app.use('/download', downloadRoutes);

@@ -95,7 +95,7 @@ describe('useDirectTaskCreation', () => {
     expect(result).toEqual({ taskId: 'provider-task-001', mode: 'direct' })
   })
 
-  it('falls back to legacy proxy flow when mode is proxy', async () => {
+  it('keeps using the direct browser flow even if backend still returns proxy mode', async () => {
     mocks.prepareTask.mockResolvedValue({
       data: {
         apiKey: 'provider-api-key',
@@ -106,9 +106,12 @@ describe('useDirectTaskCreation', () => {
         mode: 'proxy',
       },
     })
-    mocks.legacyCreateTask.mockResolvedValue({
-      data: { taskId: 'legacy-task-001', status: 'queued' },
+    mocks.adapterCreateTask.mockResolvedValue({
+      taskId: 'provider-task-proxy-compat',
+      pollingKey: 'polling-key-proxy-compat',
+      estimatedCreditCost: 30,
     })
+    mocks.registerTask.mockResolvedValue({ data: { success: true } })
 
     const { useDirectTaskCreation } = await import('../useDirectTaskCreation')
     const creator = useDirectTaskCreation()
@@ -118,13 +121,20 @@ describe('useDirectTaskCreation', () => {
       providerId: 'tripo3d',
     })
 
-    expect(mocks.legacyCreateTask).toHaveBeenCalledWith({
+    expect(mocks.legacyCreateTask).not.toHaveBeenCalled()
+    expect(mocks.adapterCreateTask).toHaveBeenCalledWith(
+      'provider-api-key',
+      { type: 'text_to_model', prompt: 'a robot', imageFile: undefined },
+      '/tripo'
+    )
+    expect(mocks.registerTask).toHaveBeenCalledWith({
+      prepareToken: 'prepare-token',
+      taskId: 'provider-task-proxy-compat',
       type: 'text_to_model',
       prompt: 'a robot',
-      provider_id: 'tripo3d',
+      pollingKey: 'polling-key-proxy-compat',
     })
-    expect(mocks.adapterCreateTask).not.toHaveBeenCalled()
-    expect(result).toEqual({ taskId: 'legacy-task-001', mode: 'proxy' })
+    expect(result).toEqual({ taskId: 'provider-task-proxy-compat', mode: 'direct' })
   })
 
   it('calls failTask to rollback when register step fails after provider task creation', async () => {

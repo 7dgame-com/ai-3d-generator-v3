@@ -100,6 +100,31 @@ describe('frontend provider adapters', () => {
     )
   })
 
+  it('Tripo createTask falls back to /tripo-alt when the primary proxy upload fails', async () => {
+    const adapter = new Tripo3DFrontendAdapter()
+    const imageFile = new File(['image-bytes'], 'ref.png', { type: 'image/png' })
+    mockFetch
+      .mockResolvedValueOnce(jsonResponse({ message: 'upstream timeout' }, 502))
+      .mockResolvedValueOnce(jsonResponse({ data: { image_token: 'img-token-002' } }))
+      .mockResolvedValueOnce(jsonResponse({ code: 0, data: { task_id: 'task-004' } }))
+
+    const result = await adapter.createTask(
+      'api-key',
+      { type: 'image_to_model', imageFile },
+      '/tripo'
+    )
+
+    expect(result).toEqual({
+      taskId: 'task-004',
+      pollingKey: 'task-004',
+      estimatedCreditCost: 30,
+    })
+    expect(mockFetch).toHaveBeenCalledTimes(3)
+    expect(mockFetch.mock.calls[0]?.[0]).toBe('/tripo/upload')
+    expect(mockFetch.mock.calls[1]?.[0]).toBe('/tripo-alt/upload')
+    expect(mockFetch.mock.calls[2]?.[0]).toBe('/tripo-alt/task')
+  })
+
   it('Tripo getTaskStatus parses success output and thumbnail', async () => {
     const adapter = new Tripo3DFrontendAdapter()
     mockFetch.mockResolvedValueOnce(
@@ -137,6 +162,38 @@ describe('frontend provider adapters', () => {
     )
   })
 
+  it('Tripo getTaskStatus falls back to /tripo-alt when the primary proxy returns 404', async () => {
+    const adapter = new Tripo3DFrontendAdapter()
+    mockFetch
+      .mockResolvedValueOnce(jsonResponse({ message: 'not found' }, 404))
+      .mockResolvedValueOnce(
+        jsonResponse({
+          code: 0,
+          data: {
+            status: 'success',
+            progress: 100,
+            result: {
+              credit_cost: 30,
+              pbr_model: { url: 'https://cdn.example.com/model-fallback.glb' },
+            },
+          },
+        })
+      )
+
+    const result = await adapter.getTaskStatus('api-key', 'task-005', '/tripo')
+
+    expect(mockFetch).toHaveBeenCalledTimes(2)
+    expect(mockFetch.mock.calls[0]?.[0]).toBe('/tripo/task/task-005')
+    expect(mockFetch.mock.calls[1]?.[0]).toBe('/tripo-alt/task/task-005')
+    expect(result).toEqual(
+      expect.objectContaining({
+        status: 'success',
+        outputUrl: 'https://cdn.example.com/model-fallback.glb',
+        creditCost: 30,
+      })
+    )
+  })
+
   it('Hyper createTask sends multipart request and parses polling key', async () => {
     const adapter = new Hyper3DFrontendAdapter()
     const imageFile = new File(['image-bytes'], 'ref.png', { type: 'image/png' })
@@ -170,6 +227,27 @@ describe('frontend provider adapters', () => {
     expect(form.get('prompt')).toBe('a robot')
     expect(form.get('tier')).toBe('Gen-2')
     expect(form.get('images')).toBeInstanceOf(File)
+  })
+
+  it('Hyper createTask surfaces upstream error details when the provider returns JSON on non-2xx', async () => {
+    const adapter = new Hyper3DFrontendAdapter()
+    mockFetch.mockResolvedValueOnce(
+      jsonResponse(
+        {
+          error: 'Upstream unavailable',
+          message: 'getaddrinfo ENOTFOUND oneapi',
+        },
+        500
+      )
+    )
+
+    await expect(
+      adapter.createTask(
+        'api-key',
+        { type: 'text_to_model', prompt: 'balloon house' },
+        '/hyper'
+      )
+    ).rejects.toThrow('Upstream unavailable: getaddrinfo ENOTFOUND oneapi')
   })
 
   it('Hyper getTaskStatus handles completed jobs and download result', async () => {

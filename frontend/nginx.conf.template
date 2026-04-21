@@ -15,14 +15,25 @@ server {
 
     # __API_LOCATIONS__
 
-    # __CONFIG_LOCATIONS__
-
     # __BACKEND_LOCATIONS__
 
     location /tripo/ {
         proxy_pass https://api.tripo3d.ai/v2/openapi/;
         proxy_ssl_server_name on;
         proxy_set_header Host api.tripo3d.ai;
+        proxy_set_header Cookie '';
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_connect_timeout 5s;
+        proxy_read_timeout 120s;
+        proxy_send_timeout 120s;
+    }
+
+    location /tripo-alt/ {
+        proxy_pass https://api.tripo3d.com/v2/openapi/;
+        proxy_ssl_server_name on;
+        proxy_set_header Host api.tripo3d.com;
         proxy_set_header Cookie '';
         proxy_set_header X-Real-IP $remote_addr;
         proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;

@@ -27,7 +27,18 @@ const renderWaitCounts = new Map<string, number>()
 
 async function parseJsonResponse<T>(response: Response): Promise<T> {
   if (!response.ok) {
-    throw new Error(`HTTP ${response.status}: ${response.statusText}`)
+    let errorDetail = ''
+    try {
+      const errorJson = (await response.json()) as { error?: string | null; message?: string | null }
+      const errorParts = [errorJson.error, errorJson.message].filter(
+        (value): value is string => typeof value === 'string' && value.trim().length > 0
+      )
+      errorDetail = errorParts.join(': ')
+    } catch {
+      // Fall back to the HTTP status text when the upstream body is not JSON.
+    }
+
+    throw new Error(errorDetail || `HTTP ${response.status}: ${response.statusText}`)
   }
   return (await response.json()) as T
 }

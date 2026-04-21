@@ -353,4 +353,19 @@ describe('GeneratorView credit dialog integration', () => {
       globalThis.FileReader = originalFileReader
     }
   })
+
+  it('shows the upstream provider error message when task creation fails without a platform error code', async () => {
+    mocks.directCreateTask.mockRejectedValue(
+      new Error('Upstream unavailable: getaddrinfo ENOTFOUND oneapi')
+    )
+
+    const wrapper = await mountView()
+    await wrapper.get('textarea').setValue('cute dragon')
+    await wrapper.findAll('button').find((button) => button.text() === 'Generate')?.trigger('click')
+
+    expect(mocks.triggerDialog).not.toHaveBeenCalled()
+    expect(mocks.elMessageError).toHaveBeenCalledWith(
+      'Upstream unavailable: getaddrinfo ENOTFOUND oneapi'
+    )
+  })
 })

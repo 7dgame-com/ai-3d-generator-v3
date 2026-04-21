@@ -8,9 +8,99 @@ import {
   ProviderBalance,
 } from './IProviderAdapter';
 
-const TRIPO_API_BASE = 'https://api.tripo3d.ai/v2/openapi';
+const TRIPO_API_BASES = [
+  'https://api.tripo3d.ai/v2/openapi',
+  'https://api.tripo3d.com/v2/openapi',
+] as const;
 const TRIPO_MODEL_VERSION = process.env.TRIPO_MODEL_VERSION || 'P1-20260311';
 const TRIPO_IMAGE_FILE_TYPE = 'image';
+const TRIPO_POLLING_KEY_PREFIX = 'tripo-base:';
+
+function getOrderedBaseUrls(preferredBaseUrl?: string): string[] {
+  if (!preferredBaseUrl || !TRIPO_API_BASES.includes(preferredBaseUrl as (typeof TRIPO_API_BASES)[number])) {
+    return [...TRIPO_API_BASES];
+  }
+
+  return [
+    preferredBaseUrl,
+    ...TRIPO_API_BASES.filter((baseUrl) => baseUrl !== preferredBaseUrl),
+  ];
+}
+
+function extractPollingBaseUrl(pollingKey?: string): string | undefined {
+  if (!pollingKey || !pollingKey.startsWith(TRIPO_POLLING_KEY_PREFIX)) {
+    return undefined;
+  }
+
+  const baseUrl = pollingKey.slice(TRIPO_POLLING_KEY_PREFIX.length);
+  return TRIPO_API_BASES.includes(baseUrl as (typeof TRIPO_API_BASES)[number]) ? baseUrl : undefined;
+}
+
+function createPollingKey(baseUrl: string): string {
+  return `${TRIPO_POLLING_KEY_PREFIX}${baseUrl}`;
+}
+
+function shouldRetryOnAlternateBase(error: unknown): boolean {
+  if (axios.isAxiosError(error)) {
+    const status = error.response?.status;
+    if (status === 401 || status === 403 || status === 422) {
+      return false;
+    }
+
+    if (typeof status === 'number') {
+      return status >= 500 || status === 404;
+    }
+
+    return true;
+  }
+
+  const status = typeof error === 'object' && error !== null && 'status' in error
+    ? Number((error as { status?: number }).status)
+    : NaN;
+
+  if (Number.isFinite(status)) {
+    return status >= 500 || status === 404;
+  }
+
+  return error instanceof Error;
+}
+
+async function withBaseFallback<T>(
+  request: (baseUrl: string) => Promise<T>,
+  preferredBaseUrl?: string
+): Promise<{ result: T; baseUrl: string }> {
+  const baseUrls = getOrderedBaseUrls(preferredBaseUrl);
+  let lastError: unknown;
+
+  for (let index = 0; index < baseUrls.length; index += 1) {
+    const baseUrl = baseUrls[index];
+
+    try {
+      return {
+        result: await request(baseUrl),
+        baseUrl,
+      };
+    } catch (error) {
+      lastError = error;
+      const isLastBase = index === baseUrls.length - 1;
+      if (isLastBase || !shouldRetryOnAlternateBase(error)) {
+        throw error;
+      }
+    }
+  }
+
+  throw lastError instanceof Error ? lastError : new Error('Tripo3D request failed');
+}
+
+async function parseFetchJson<T>(response: Response): Promise<T> {
+  if (!response.ok) {
+    const error = new Error(`HTTP ${response.status}: ${response.statusText}`) as Error & { status?: number };
+    error.status = response.status;
+    throw error;
+  }
+
+  return (await response.json()) as T;
+}
 
 function getUploadFilename(mimeType?: string): string {
   switch (mimeType) {
@@ -34,10 +124,12 @@ export class Tripo3DAdapter implements IProviderAdapter {
 
   async verifyApiKey(apiKey: string): Promise<void> {
     try {
-      await axios.get(`${TRIPO_API_BASE}/user/balance`, {
-        headers: { Authorization: `Bearer ${apiKey}` },
-        timeout: 10000,
-      });
+      await withBaseFallback((baseUrl) =>
+        axios.get(`${baseUrl}/user/balance`, {
+          headers: { Authorization: `Bearer ${apiKey}` },
+          timeout: 10000,
+        })
+      );
     } catch (err) {
       if (axios.isAxiosError(err)) {
         const status = err.response?.status;
@@ -53,62 +145,83 @@ export class Tripo3DAdapter implements IProviderAdapter {
   async createTask(apiKey: string, input: CreateTaskInput): Promise<CreateTaskOutput> {
     const { type, prompt, imageBase64, mimeType } = input;
 
-    let requestBody: Record<string, unknown>;
+    const { result, baseUrl } = await withBaseFallback(async (activeBaseUrl) => {
+      let requestBody: Record<string, unknown>;
 
-    if (type === 'text_to_model') {
-      requestBody = { type: 'text_to_model', model_version: TRIPO_MODEL_VERSION, prompt };
-    } else {
-      // image_to_model: upload image first to get a file token
-      const uploadFormData = new FormData();
-      uploadFormData.append('file', Buffer.from(imageBase64 ?? '', 'base64'), {
-        filename: getUploadFilename(mimeType),
-        contentType: mimeType,
+      if (type === 'text_to_model') {
+        requestBody = { type: 'text_to_model', model_version: TRIPO_MODEL_VERSION, prompt };
+      } else {
+        // image_to_model: upload image first to get a file token
+        const uploadFormData = new FormData();
+        uploadFormData.append('file', Buffer.from(imageBase64 ?? '', 'base64'), {
+          filename: getUploadFilename(mimeType),
+          contentType: mimeType,
+        });
+        const uploadResp = await axios.post(
+          `${activeBaseUrl}/upload`,
+          uploadFormData,
+          {
+            headers: {
+              Authorization: `Bearer ${apiKey}`,
+              ...uploadFormData.getHeaders(),
+            },
+            timeout: 30000,
+          }
+        );
+        const imageToken: string = uploadResp.data?.data?.image_token;
+        requestBody = {
+          type: 'image_to_model',
+          model_version: TRIPO_MODEL_VERSION,
+          file: { type: TRIPO_IMAGE_FILE_TYPE, file_token: imageToken },
+        };
+      }
+
+      const resp = await axios.post(`${activeBaseUrl}/task`, requestBody, {
+        headers: { Authorization: `Bearer ${apiKey}`, 'Content-Type': 'application/json' },
+        timeout: 30000,
       });
-      const uploadResp = await axios.post(
-        `${TRIPO_API_BASE}/upload`,
-        uploadFormData,
-        {
-          headers: {
-            Authorization: `Bearer ${apiKey}`,
-            ...uploadFormData.getHeaders(),
-          },
-          timeout: 30000,
-        }
-      );
-      const imageToken: string = uploadResp.data?.data?.image_token;
-      requestBody = {
-        type: 'image_to_model',
-        model_version: TRIPO_MODEL_VERSION,
-        file: { type: TRIPO_IMAGE_FILE_TYPE, file_token: imageToken },
-      };
-    }
 
-    const resp = await axios.post(`${TRIPO_API_BASE}/task`, requestBody, {
-      headers: { Authorization: `Bearer ${apiKey}`, 'Content-Type': 'application/json' },
-      timeout: 30000,
+      if (resp.data?.code !== 0) {
+        throw new Error(resp.data?.message ?? 'Tripo3D API 返回错误');
+      }
+
+      return resp.data;
     });
 
-    if (resp.data?.code !== 0) {
-      throw new Error(resp.data?.message ?? 'Tripo3D API 返回错误');
-    }
-
-    const taskId: string = resp.data.data.task_id;
-    return { taskId, pollingKey: taskId, estimatedCost: 30 };
+    const taskId: string = result.data.task_id;
+    return { taskId, pollingKey: createPollingKey(baseUrl), estimatedCost: 30 };
   }
 
-  async getTaskStatus(apiKey: string, taskId: string): Promise<TaskStatusOutput> {
-    const response = await fetch(`${TRIPO_API_BASE}/task/${taskId}`, {
-      headers: {
-        Authorization: `Bearer ${apiKey}`,
-        'Content-Type': 'application/json',
-      },
-    });
+  async getTaskStatus(apiKey: string, taskId: string, pollingKey?: string): Promise<TaskStatusOutput> {
+    const preferredBaseUrl = extractPollingBaseUrl(pollingKey);
+    const { result: responseData } = await withBaseFallback((baseUrl) =>
+      fetch(`${baseUrl}/task/${taskId}`, {
+        headers: {
+          Authorization: `Bearer ${apiKey}`,
+          'Content-Type': 'application/json',
+        },
+      }).then((response) => parseFetchJson<{
+        code: number;
+        data?: {
+          task_id: string;
+          status: string;
+          progress?: number;
+          thumbnail?: string;
+          output?: {
+            model?: string;
+            pbr_model?: string;
+            rendered_image?: string | { url?: string };
+          };
+          result?: {
+            credit_cost?: number;
+            pbr_model?: { url?: string; type?: string };
+            rendered_image?: { url?: string; type?: string };
+          };
+        };
+      }>(response))
+    , preferredBaseUrl);
 
-    if (!response.ok) {
-      throw new Error(`HTTP ${response.status}: ${response.statusText}`);
-    }
-
-    const responseData = (await response.json()) as {
+    const typedResponseData = responseData as {
       code: number;
       data?: {
         task_id: string;
@@ -128,7 +241,7 @@ export class Tripo3DAdapter implements IProviderAdapter {
       };
     };
 
-    const taskData = responseData.data;
+    const taskData = typedResponseData.data;
     if (!taskData) {
       throw new Error('Tripo3D API 返回数据为空');
     }
@@ -167,10 +280,12 @@ export class Tripo3DAdapter implements IProviderAdapter {
   }
 
   async getBalance(apiKey: string): Promise<ProviderBalance> {
-    const resp = await axios.get(`${TRIPO_API_BASE}/user/balance`, {
-      headers: { Authorization: `Bearer ${apiKey}` },
-      timeout: 10000,
-    });
+    const { result: resp } = await withBaseFallback((baseUrl) =>
+      axios.get(`${baseUrl}/user/balance`, {
+        headers: { Authorization: `Bearer ${apiKey}` },
+        timeout: 10000,
+      })
+    );
 
     const data = resp.data?.data ?? resp.data;
     const balancePayload =

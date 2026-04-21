@@ -10,6 +10,12 @@ vi.mock('../../api', () => ({
   getCreditStatus,
 }))
 
+vi.mock('../useAuthSession', () => ({
+  useAuthSession: () => ({
+    isRootUser,
+  }),
+}))
+
 vi.mock('../usePermissions', () => ({
   usePermissions: () => ({
     can,
@@ -53,7 +59,7 @@ describe('Feature: ai-3d-v3-i18n-credit-dialog, Property 1: Credit exhaustion de
   })
 
   it('opens the dialog after a successful zero-credit check and exposes admin status', async () => {
-    can.mockImplementation((permission: string) => permission === 'admin-config')
+    can.mockReturnValue(false)
     isRootUser.value = true
     getCreditStatus.mockResolvedValue({
       data: {
@@ -83,7 +89,7 @@ describe('Feature: ai-3d-v3-i18n-credit-dialog, Property 1: Credit exhaustion de
   })
 
   it('does not expose admin recharge affordances to non-root operators', async () => {
-    can.mockImplementation((permission: string) => permission === 'admin-config')
+    can.mockReturnValue(true)
     isRootUser.value = false
 
     const { useCreditCheck } = await import('../useCreditCheck')

@@ -24,7 +24,7 @@
 │ │ Vue 3 SPA                              │   │
 │ │  usePluginMessageBridge → 通信桥       │   │
 │ │  useTheme → 主题同步                   │   │
-│ │  usePermissions → 权限查询              │   │
+│ │  useAuthSession → 身份/root 会话        │   │
 │ │  axios 双实例 → API 请求               │   │
 │ │  token.ts → localStorage 管理          │   │
 │ └───────────────────────────────────────┘   │
@@ -32,7 +32,7 @@
                    │ /api/ 反向代理 (failover)
 ┌──────────────────▼──────────────────────────┐
 │ 主后端 (Yii2 PHP)                            │
-│  Plugin Auth API (verify-token, allowed-actions) │
+│  Plugin Auth API (verify-token)              │
 │  业务 API                                    │
 └─────────────────────────────────────────────┘
 ```
@@ -64,13 +64,13 @@ APP_API_2_URL=http://backup-api:80
 
 当主后端 502/503/504 时自动切换到备用后端。
 
-## 权限系统
+## 身份与访问控制
 
-插件通过 `/api/v1/plugin/allowed-actions?plugin_name=xxx` 获取当前用户的操作权限列表。
+插件通过 `/api/v1/plugin/verify-token` 获取当前用户身份和角色。
 
-- `usePermissions` composable 提供 `can(action)` 和 `hasAny()` 方法
-- 路由守卫通过 `meta.requiresPermission` 字段控制页面访问
-- 支持通配符 `*` 表示全部权限
+- 普通功能按 `auth-only` 处理，由插件后端结合资源归属做约束
+- 管理功能按 `root-only` 处理，由前端会话和后端 `requireRootUser` 双重约束
+- 插件运行时不再依赖 `/api-config`、`allowed-actions`、`check-permission`
 
 ## 主题系统
 

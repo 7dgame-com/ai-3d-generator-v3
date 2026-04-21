@@ -14,8 +14,7 @@
 
 import { Request, Response, NextFunction } from 'express';
 import axios from 'axios';
-
-const MAIN_API_URL = process.env.MAIN_API_URL || 'http://localhost:8081';
+import { requestMainBusinessApiGet } from '../config/mainBusinessApi';
 
 /**
  * 注入到 req.user 的用户信息
@@ -25,6 +24,20 @@ export interface UserInfo {
   username?: string;
   roles?: string[];
   [key: string]: unknown;
+}
+
+interface VerifyTokenPayload {
+  user_id?: number | string;
+  id?: number | string;
+  username?: string;
+  [key: string]: unknown;
+}
+
+interface VerifyTokenResponse {
+  data?: VerifyTokenPayload;
+  user_id?: number | string;
+  id?: number | string;
+  username?: string;
 }
 
 /**
@@ -48,11 +61,11 @@ export async function auth(req: Request, res: Response, next: NextFunction): Pro
   const token = header.slice(7); // Remove "Bearer " prefix
 
   try {
-    const response = await axios.get(`${MAIN_API_URL}/v1/plugin/verify-token`, {
+    const { response } = await requestMainBusinessApiGet<VerifyTokenResponse>('/v1/plugin/verify-token', {
+      key: token,
       headers: {
         Authorization: `Bearer ${token}`,
       },
-      timeout: 5000,
     });
 
     // Main backend returns user info on success
@@ -63,7 +76,6 @@ export async function auth(req: Request, res: Response, next: NextFunction): Pro
       res.status(401).json({ code: 1001, message: 'Token 无效或已过期' });
       return;
     }
-    console.log('[AuthMiddleware] resolved userId:', userId);
 
     (req as AuthenticatedRequest).user = {
       userId,
@@ -74,14 +86,18 @@ export async function auth(req: Request, res: Response, next: NextFunction): Pro
     next();
   } catch (err) {
     // Network errors or 401/403 from main backend
-    if (axios.isAxiosError(err)) {
-      const status = err.response?.status;
+    if (typeof err === 'object' && err !== null && 'response' in err) {
+      const status = (err as { response?: { status?: number } }).response?.status;
       if (status === 401 || status === 403) {
         res.status(401).json({ code: 1001, message: 'Token 无效或已过期' });
         return;
       }
       // Network error or timeout
-      console.error('[AuthMiddleware] 调用 verify-token 失败:', err.message, err.response?.status, JSON.stringify(err.response?.data));
+      if (axios.isAxiosError(err)) {
+        console.error('[AuthMiddleware] 调用 verify-token 失败:', err.message, err.response?.status, JSON.stringify(err.response?.data));
+      } else {
+        console.error('[AuthMiddleware] 调用 verify-token 失败:', String(err));
+      }
     } else {
       console.error('[AuthMiddleware] 未知错误:', String(err));
     }

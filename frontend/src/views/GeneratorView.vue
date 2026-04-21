@@ -12,7 +12,7 @@
         <el-tab-pane :label="t('generator.textTab')" name="text">
           <el-input v-model="prompt" type="textarea" :rows="4" :maxlength="500" show-word-limit />
           <div class="actions">
-            <el-button type="primary" :disabled="!can('generate-model') || !prompt.trim()" :loading="submitting" @click="submitText">
+            <el-button type="primary" :disabled="!prompt.trim()" :loading="submitting" @click="submitText">
               {{ t('generator.submit') }}
             </el-button>
           </div>
@@ -51,7 +51,7 @@
             </div>
           </div>
           <div class="actions">
-            <el-button type="primary" :disabled="!can('generate-model') || !imageBase64" :loading="submitting" @click="submitImage">
+            <el-button type="primary" :disabled="!imageBase64" :loading="submitting" @click="submitImage">
               {{ t('generator.submit') }}
             </el-button>
           </div>
@@ -119,11 +119,11 @@
               </div>
               <el-progress v-if="task.status === 'processing'" :percentage="task.progress" />
               <div class="actions">
-                <el-button v-if="task.status === 'success' && !task.downloadExpired && can('download-model')" @click="download(task.taskId)">
+                <el-button v-if="task.status === 'success' && !task.downloadExpired" @click="download(task.taskId)">
                   {{ t('generator.download') }}
                 </el-button>
                 <el-button
-                  v-if="task.status === 'success' && !task.downloadExpired && !task.resourceId && can('upload-to-main')"
+                  v-if="task.status === 'success' && !task.downloadExpired && !task.resourceId"
                   :loading="uploadingTaskId === task.taskId"
                   @click="upload(task.taskId, task.prompt)"
                 >
@@ -171,7 +171,6 @@ import type { TaskStatusOutput } from '../adapters/IFrontendProviderAdapter'
 import CreditDialog from '../components/CreditDialog.vue'
 import { useCreditCheck } from '../composables/useCreditCheck'
 import { useDirectTaskCreation } from '../composables/useDirectTaskCreation'
-import { usePermissions } from '../composables/usePermissions'
 import { useTaskPoller } from '../composables/useTaskPoller'
 import { useUploadService } from '../composables/useUploadService'
 import { useI18n } from 'vue-i18n'
@@ -191,7 +190,6 @@ import {
 const { t, locale } = useI18n()
 const router = useRouter()
 const { themeName } = useTheme()
-const { can, fetchAllowedActions } = usePermissions()
 const { showCreditDialog, isAdmin, checkCredits, triggerDialog, closeDialog } = useCreditCheck()
 const { createTask: createDirectTask } = useDirectTaskCreation()
 const { startPolling, stopAllPolling } = useTaskPoller()
@@ -291,6 +289,9 @@ function getErrorMessage(error: unknown): string {
   if (typeof code === 'string' && t(`errors.${code}`) !== `errors.${code}`) {
     return t(`errors.${code}`)
   }
+  if (error instanceof Error && error.message.trim()) {
+    return error.message
+  }
   return t('errors.createTaskFailed')
 }
 
@@ -300,7 +301,6 @@ function isInsufficientCreditsError(error: unknown): boolean {
 }
 
 onMounted(async () => {
-  await fetchAllowedActions()
   await loadProviders()
   await loadTasks()
   await checkCredits()
@@ -575,7 +575,7 @@ async function submitText() {
       outputUrl: null,
       thumbnailUrl: null,
       thumbnailExpired: false,
-      directModeTask: response.mode === 'direct',
+      directModeTask: true,
       resourceId: null,
       errorMessage: null,
       createdAt: new Date().toISOString(),
@@ -583,9 +583,6 @@ async function submitText() {
       expiresAt: null,
       downloadExpired: false,
     })
-    if (response.mode === 'proxy') {
-      startPolling(createdTaskId, updateTask)
-    }
     prompt.value = ''
   } catch (error) {
     if (isInsufficientCreditsError(error)) {
@@ -644,7 +641,7 @@ async function submitImage() {
       outputUrl: null,
       thumbnailUrl: null,
       thumbnailExpired: false,
-      directModeTask: response.mode === 'direct',
+      directModeTask: true,
       resourceId: null,
       errorMessage: null,
       createdAt: new Date().toISOString(),
@@ -652,9 +649,6 @@ async function submitImage() {
       expiresAt: null,
       downloadExpired: false,
     })
-    if (response.mode === 'proxy') {
-      startPolling(createdTaskId, updateTask)
-    }
     imageFile.value = null
     imageBase64.value = null
     imagePreviewUrl.value = null
