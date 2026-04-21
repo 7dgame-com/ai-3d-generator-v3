@@ -38,7 +38,7 @@ describe('CreditDialog', () => {
     })
 
     expect(wrapper.text()).toContain('Insufficient Credits')
-    expect(wrapper.text()).toContain('All providers have zero credits.')
+    expect(wrapper.text()).toContain('The shared site quota is depleted.')
     expect(wrapper.text()).toContain('Go to Recharge')
     expect(wrapper.text()).not.toContain('OK')
 

@@ -26,6 +26,12 @@ const router = createRouter({
       meta: { public: true, title: 'No Permission' },
     },
     {
+      path: '/api-diagnostics',
+      name: 'ApiDiagnostics',
+      component: () => import('../views/ApiDiagnosticsView.vue'),
+      meta: { public: true, title: 'API Diagnostics' },
+    },
+    {
       path: '/',
       component: () => import('../layout/AppLayout.vue'),
       children: [
