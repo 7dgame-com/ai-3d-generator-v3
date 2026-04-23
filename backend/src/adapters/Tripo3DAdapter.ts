@@ -62,7 +62,7 @@ function shouldRetryOnAlternateBase(error: unknown): boolean {
     : NaN;
 
   if (Number.isFinite(status)) {
-    return status >= 500 || status === 404;
+    return status === 401 || status === 403 || status >= 500 || status === 404;
   }
 
   return error instanceof Error;

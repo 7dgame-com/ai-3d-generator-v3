@@ -251,4 +251,58 @@ describe('Tripo3DAdapter endpoint fallback', () => {
       creditCost: 30,
     });
   });
+
+  it('falls back to the secondary Tripo base when getTaskStatus gets a 403 on the preferred base', async () => {
+    (global.fetch as jest.Mock)
+      .mockResolvedValueOnce(jsonFetchResponse({ message: 'forbidden' }, 403, 'Forbidden'))
+      .mockResolvedValueOnce(
+        jsonFetchResponse({
+          code: 0,
+          data: {
+            task_id: 'task-004',
+            status: 'success',
+            progress: 100,
+            result: {
+              credit_cost: 30,
+              pbr_model: {
+                url: 'https://cdn.example.com/model-fallback.glb',
+              },
+            },
+          },
+        })
+      );
+
+    const adapter = new Tripo3DAdapter();
+    const result = await adapter.getTaskStatus(
+      'api-key',
+      'task-004',
+      'tripo-base:https://api.tripo3d.com/v2/openapi'
+    );
+
+    expect(global.fetch).toHaveBeenNthCalledWith(
+      1,
+      'https://api.tripo3d.com/v2/openapi/task/task-004',
+      expect.objectContaining({
+        headers: {
+          Authorization: 'Bearer api-key',
+          'Content-Type': 'application/json',
+        },
+      })
+    );
+    expect(global.fetch).toHaveBeenNthCalledWith(
+      2,
+      'https://api.tripo3d.ai/v2/openapi/task/task-004',
+      expect.objectContaining({
+        headers: {
+          Authorization: 'Bearer api-key',
+          'Content-Type': 'application/json',
+        },
+      })
+    );
+    expect(result).toMatchObject({
+      status: 'success',
+      outputUrl: 'https://cdn.example.com/model-fallback.glb',
+      creditCost: 30,
+    });
+  });
 });

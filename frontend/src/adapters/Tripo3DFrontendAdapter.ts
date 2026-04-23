@@ -8,7 +8,11 @@ import { getEstimatedCreditCost } from '../utils/providerBilling'
 
 const TRIPO_MODEL_VERSION = 'P1-20260311'
 const TRIPO_IMAGE_FILE_TYPE = 'image'
+const TRIPO_API_BASE = '/tripo'
 const TRIPO_ALT_API_BASE = '/tripo-alt'
+const TRIPO_API_BASE_URL = 'https://api.tripo3d.com/v2/openapi'
+const TRIPO_ALT_API_BASE_URL = 'https://api.tripo3d.ai/v2/openapi'
+const TRIPO_POLLING_KEY_PREFIX = 'tripo-base:'
 
 interface TripoResponseBody {
   code?: number
@@ -42,15 +46,52 @@ async function parseJsonResponse<T>(response: Response): Promise<T> {
 }
 
 function getTripoApiBaseCandidates(apiBaseUrl: string): string[] {
-  if (apiBaseUrl === '/tripo') {
-    return ['/tripo', TRIPO_ALT_API_BASE]
+  if (apiBaseUrl === TRIPO_API_BASE) {
+    return [TRIPO_API_BASE, TRIPO_ALT_API_BASE]
   }
 
   if (apiBaseUrl === TRIPO_ALT_API_BASE) {
-    return [TRIPO_ALT_API_BASE, '/tripo']
+    return [TRIPO_ALT_API_BASE, TRIPO_API_BASE]
   }
 
   return [apiBaseUrl]
+}
+
+function getCanonicalTripoApiBase(apiBaseUrl: string): string {
+  if (apiBaseUrl === TRIPO_API_BASE) {
+    return TRIPO_API_BASE_URL
+  }
+
+  if (apiBaseUrl === TRIPO_ALT_API_BASE) {
+    return TRIPO_ALT_API_BASE_URL
+  }
+
+  return apiBaseUrl
+}
+
+function getProxyTripoApiBase(apiBaseUrl: string): string | undefined {
+  if (apiBaseUrl === TRIPO_API_BASE || apiBaseUrl === TRIPO_API_BASE_URL) {
+    return TRIPO_API_BASE
+  }
+
+  if (apiBaseUrl === TRIPO_ALT_API_BASE || apiBaseUrl === TRIPO_ALT_API_BASE_URL) {
+    return TRIPO_ALT_API_BASE
+  }
+
+  return undefined
+}
+
+function createPollingKey(apiBaseUrl: string): string {
+  return `${TRIPO_POLLING_KEY_PREFIX}${getCanonicalTripoApiBase(apiBaseUrl)}`
+}
+
+function getPreferredTripoApiBase(apiBaseUrl: string, pollingKey?: string): string {
+  if (!pollingKey || !pollingKey.startsWith(TRIPO_POLLING_KEY_PREFIX)) {
+    return apiBaseUrl
+  }
+
+  const hintedBaseUrl = pollingKey.slice(TRIPO_POLLING_KEY_PREFIX.length)
+  return getProxyTripoApiBase(hintedBaseUrl) ?? apiBaseUrl
 }
 
 function shouldRetryOnAlternateBase(error: unknown): boolean {
@@ -59,7 +100,7 @@ function shouldRetryOnAlternateBase(error: unknown): boolean {
     : Number.NaN
 
   if (Number.isFinite(status)) {
-    return status >= 500 || status === 404
+    return status === 401 || status === 403 || status >= 500 || status === 404
   }
 
   return error instanceof Error
@@ -68,7 +109,7 @@ function shouldRetryOnAlternateBase(error: unknown): boolean {
 async function withApiBaseFallback<T>(
   apiBaseUrl: string,
   request: (activeBaseUrl: string) => Promise<T>
-): Promise<T> {
+): Promise<{ result: T; apiBaseUrl: string }> {
   const candidates = getTripoApiBaseCandidates(apiBaseUrl)
   let lastError: unknown
 
@@ -76,7 +117,10 @@ async function withApiBaseFallback<T>(
     const activeBaseUrl = candidates[index]
 
     try {
-      return await request(activeBaseUrl)
+      return {
+        result: await request(activeBaseUrl),
+        apiBaseUrl: activeBaseUrl,
+      }
     } catch (error) {
       lastError = error
       const isLastCandidate = index === candidates.length - 1
@@ -99,9 +143,9 @@ export class Tripo3DFrontendAdapter implements IFrontendProviderAdapter {
   readonly providerId = 'tripo3d'
 
   async createTask(apiKey: string, input: CreateTaskInput, apiBaseUrl: string): Promise<CreateTaskOutput> {
-    return withApiBaseFallback(apiBaseUrl, async (activeBaseUrl) => {
+    const { result, apiBaseUrl: activeBaseUrl } = await withApiBaseFallback(apiBaseUrl, async (resolvedApiBaseUrl) => {
       if (input.type === 'text_to_model') {
-        const response = await fetch(`${activeBaseUrl}/task`, {
+        const response = await fetch(`${resolvedApiBaseUrl}/task`, {
           method: 'POST',
           credentials: 'omit',
           headers: {
@@ -120,7 +164,6 @@ export class Tripo3DFrontendAdapter implements IFrontendProviderAdapter {
         }
         return {
           taskId: json.data.task_id,
-          pollingKey: json.data.task_id,
           estimatedCreditCost: getEstimatedCreditCost(this.providerId),
         }
       }
@@ -130,7 +173,7 @@ export class Tripo3DFrontendAdapter implements IFrontendProviderAdapter {
       }
 
       const uploadFormData = createUploadFormData(input.imageFile)
-      const uploadResponse = await fetch(`${activeBaseUrl}/upload`, {
+      const uploadResponse = await fetch(`${resolvedApiBaseUrl}/upload`, {
         method: 'POST',
         credentials: 'omit',
         headers: {
@@ -144,7 +187,7 @@ export class Tripo3DFrontendAdapter implements IFrontendProviderAdapter {
         throw new Error('Tripo3D 上传图片失败')
       }
 
-      const createResponse = await fetch(`${activeBaseUrl}/task`, {
+      const createResponse = await fetch(`${resolvedApiBaseUrl}/task`, {
         method: 'POST',
         credentials: 'omit',
         headers: {
@@ -167,15 +210,20 @@ export class Tripo3DFrontendAdapter implements IFrontendProviderAdapter {
 
       return {
         taskId: createJson.data.task_id,
-        pollingKey: createJson.data.task_id,
         estimatedCreditCost: getEstimatedCreditCost(this.providerId),
       }
     })
+
+    return {
+      ...result,
+      pollingKey: createPollingKey(activeBaseUrl),
+    }
   }
 
-  async getTaskStatus(apiKey: string, taskId: string, apiBaseUrl: string): Promise<TaskStatusOutput> {
-    const json = await withApiBaseFallback(apiBaseUrl, async (activeBaseUrl) => {
-      const response = await fetch(`${activeBaseUrl}/task/${taskId}`, {
+  async getTaskStatus(apiKey: string, taskId: string, apiBaseUrl: string, pollingKey?: string): Promise<TaskStatusOutput> {
+    const preferredApiBaseUrl = getPreferredTripoApiBase(apiBaseUrl, pollingKey)
+    const { result: json } = await withApiBaseFallback(preferredApiBaseUrl, async (resolvedApiBaseUrl) => {
+      const response = await fetch(`${resolvedApiBaseUrl}/task/${taskId}`, {
         credentials: 'omit',
         headers: {
           Authorization: `Bearer ${apiKey}`,

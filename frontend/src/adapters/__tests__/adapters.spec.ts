@@ -3,6 +3,8 @@ import { Hyper3DFrontendAdapter } from '../Hyper3DFrontendAdapter'
 import { Tripo3DFrontendAdapter } from '../Tripo3DFrontendAdapter'
 
 const mockFetch = vi.fn()
+const TRIPO_PRIMARY_POLLING_KEY = 'tripo-base:https://api.tripo3d.com/v2/openapi'
+const TRIPO_ALT_POLLING_KEY = 'tripo-base:https://api.tripo3d.ai/v2/openapi'
 
 function jsonResponse(body: unknown, status = 200): Response {
   return new Response(JSON.stringify(body), {
@@ -33,7 +35,7 @@ describe('frontend provider adapters', () => {
 
     expect(result).toEqual({
       taskId: 'task-001',
-      pollingKey: 'task-001',
+      pollingKey: TRIPO_PRIMARY_POLLING_KEY,
       estimatedCreditCost: 30,
     })
     const [url, options] = mockFetch.mock.calls[0] as [string, RequestInit]
@@ -67,7 +69,11 @@ describe('frontend provider adapters', () => {
       '/tripo'
     )
 
-    expect(result.taskId).toBe('task-002')
+    expect(result).toEqual({
+      taskId: 'task-002',
+      pollingKey: TRIPO_PRIMARY_POLLING_KEY,
+      estimatedCreditCost: 30,
+    })
     expect(mockFetch).toHaveBeenCalledTimes(2)
     const [uploadUrl, uploadOptions] = mockFetch.mock.calls[0] as [string, RequestInit]
     expect(uploadUrl).toBe('/tripo/upload')
@@ -116,13 +122,35 @@ describe('frontend provider adapters', () => {
 
     expect(result).toEqual({
       taskId: 'task-004',
-      pollingKey: 'task-004',
+      pollingKey: TRIPO_ALT_POLLING_KEY,
       estimatedCreditCost: 30,
     })
     expect(mockFetch).toHaveBeenCalledTimes(3)
     expect(mockFetch.mock.calls[0]?.[0]).toBe('/tripo/upload')
     expect(mockFetch.mock.calls[1]?.[0]).toBe('/tripo-alt/upload')
     expect(mockFetch.mock.calls[2]?.[0]).toBe('/tripo-alt/task')
+  })
+
+  it('Tripo createTask falls back to /tripo-alt on 401 and returns the active base hint in pollingKey', async () => {
+    const adapter = new Tripo3DFrontendAdapter()
+    mockFetch
+      .mockResolvedValueOnce(jsonResponse({ message: 'Authentication failed' }, 401))
+      .mockResolvedValueOnce(jsonResponse({ code: 0, data: { task_id: 'task-401' } }))
+
+    const result = await adapter.createTask(
+      'api-key',
+      { type: 'text_to_model', prompt: 'a bronze lamp' },
+      '/tripo'
+    )
+
+    expect(result).toEqual({
+      taskId: 'task-401',
+      pollingKey: TRIPO_ALT_POLLING_KEY,
+      estimatedCreditCost: 30,
+    })
+    expect(mockFetch).toHaveBeenCalledTimes(2)
+    expect(mockFetch.mock.calls[0]?.[0]).toBe('/tripo/task')
+    expect(mockFetch.mock.calls[1]?.[0]).toBe('/tripo-alt/task')
   })
 
   it('Tripo getTaskStatus parses success output and thumbnail', async () => {
@@ -190,6 +218,67 @@ describe('frontend provider adapters', () => {
         status: 'success',
         outputUrl: 'https://cdn.example.com/model-fallback.glb',
         creditCost: 30,
+      })
+    )
+  })
+
+  it('Tripo getTaskStatus falls back to /tripo-alt when the primary proxy returns 403', async () => {
+    const adapter = new Tripo3DFrontendAdapter()
+    mockFetch
+      .mockResolvedValueOnce(jsonResponse({ message: 'forbidden' }, 403))
+      .mockResolvedValueOnce(
+        jsonResponse({
+          code: 0,
+          data: {
+            status: 'success',
+            progress: 100,
+            result: {
+              credit_cost: 30,
+              pbr_model: { url: 'https://cdn.example.com/model-auth-fallback.glb' },
+            },
+          },
+        })
+      )
+
+    const result = await adapter.getTaskStatus('api-key', 'task-006', '/tripo')
+
+    expect(mockFetch).toHaveBeenCalledTimes(2)
+    expect(mockFetch.mock.calls[0]?.[0]).toBe('/tripo/task/task-006')
+    expect(mockFetch.mock.calls[1]?.[0]).toBe('/tripo-alt/task/task-006')
+    expect(result).toEqual(
+      expect.objectContaining({
+        status: 'success',
+        outputUrl: 'https://cdn.example.com/model-auth-fallback.glb',
+        creditCost: 30,
+      })
+    )
+  })
+
+  it('Tripo getTaskStatus prefers the polling key base hint before issuing requests', async () => {
+    const adapter = new Tripo3DFrontendAdapter()
+    mockFetch.mockResolvedValueOnce(
+      jsonResponse({
+        code: 0,
+        data: {
+          status: 'processing',
+          progress: 66,
+        },
+      })
+    )
+
+    const result = await adapter.getTaskStatus(
+      'api-key',
+      'task-007',
+      '/tripo',
+      TRIPO_ALT_POLLING_KEY
+    )
+
+    expect(mockFetch).toHaveBeenCalledTimes(1)
+    expect(mockFetch.mock.calls[0]?.[0]).toBe('/tripo-alt/task/task-007')
+    expect(result).toEqual(
+      expect.objectContaining({
+        status: 'processing',
+        progress: 66,
       })
     )
   })
