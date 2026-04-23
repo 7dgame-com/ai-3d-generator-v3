@@ -9,7 +9,7 @@
 # ============================================================
 
 # ---- 阶段 1：构建 ----
-FROM node:20-alpine AS builder
+FROM node:24-alpine AS builder
 
 WORKDIR /app
 
@@ -22,7 +22,7 @@ COPY src/ ./src/
 RUN npm run build
 
 # ---- 阶段 2：生产 ----
-FROM node:20-alpine
+FROM node:24-alpine
 
 WORKDIR /app
 
