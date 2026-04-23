@@ -21,7 +21,6 @@
         if (data.type === 'INIT' && data.payload && data.payload.token) {
           window.__EARLY_INIT_PAYLOAD__ = data.payload;
           localStorage.setItem('ai-3d-gen-v3-token', data.payload.token);
-          window.parent.postMessage({ type: 'PLUGIN_READY', id: 'ready-early-' + Date.now() }, '*');
         }
       });
       // 从 URL 参数初始化主题
