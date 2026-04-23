@@ -8,15 +8,16 @@
 
 | 文档 | 位置 | 说明 |
 |------|------|------|
+| 插件系统总览 | `docs/plugin-system.md` | 当前插件治理、清单和文档入口 |
 | 插件开发指南 | `web/docs/plugin-development-guide.md` | 主系统中插件开发的整体指南 |
-| 插件实现指南 | `plugins/user-management/docs/PLUGIN-IMPLEMENTATION-GUIDE.md` | user-management 实现细节（本模板参考来源） |
+| 插件实现指南 | `plugins/user-management/docs/PLUGIN-IMPLEMENTATION-GUIDE.md` | user-management 业务插件实现参考，非通用协议权威来源 |
 
 ## 设计系统
 
 | 文档 | 位置 | 说明 |
 |------|------|------|
 | 插件设计指南 | `web/docs/plugin-design-guide.md` | 主题和 CSS 变量设计规范 |
-| 设计参考 | `plugins/user-management/docs/PLUGIN-DESIGN-REFERENCE.md` | user-management 设计参考 |
+| 设计参考 | `plugins/user-management/docs/PLUGIN-DESIGN-REFERENCE.md` | user-management 复杂业务页面参考 |
 
 ## 认证授权
 
