@@ -72,9 +72,10 @@ adminRouter.get('/config', async (req: Request, res: Response): Promise<void> =>
 adminRouter.put('/config', async (req: Request, res: Response): Promise<void> => {
   const { apiKey, provider_id: rawProviderId } = req.body as { apiKey?: string; provider_id?: string };
   const providerId = resolveAdminProviderId(rawProviderId);
+  const normalizedApiKey = typeof apiKey === 'string' ? apiKey.trim() : '';
 
   // 格式验证
-  if (!apiKey || typeof apiKey !== 'string') {
+  if (!normalizedApiKey) {
     res.status(422).json({ code: 4001, message: '参数错误', errors: ['apiKey 不能为空'] });
     return;
   }
@@ -91,7 +92,7 @@ adminRouter.put('/config', async (req: Request, res: Response): Promise<void> =>
     return;
   }
 
-  if (!adapter.validateApiKeyFormat(apiKey)) {
+  if (!adapter.validateApiKeyFormat(normalizedApiKey)) {
     res.status(422).json({
       code: 4001,
       message: '参数错误',
@@ -102,7 +103,7 @@ adminRouter.put('/config', async (req: Request, res: Response): Promise<void> =>
 
   // 连通性验证
   try {
-    await adapter.verifyApiKey(apiKey);
+    await adapter.verifyApiKey(normalizedApiKey);
   } catch (err) {
     const e = err as { code?: number; status?: number; message?: string; detail?: string };
     if (e.status === 422) {
@@ -115,7 +116,7 @@ adminRouter.put('/config', async (req: Request, res: Response): Promise<void> =>
 
   // 加密并 upsert
   try {
-    const encrypted = encrypt(apiKey);
+    const encrypted = encrypt(normalizedApiKey);
     const configKey = `${providerId}_api_key`;
     await query(
       `INSERT INTO system_config (\`key\`, \`value\`) VALUES (?, ?)

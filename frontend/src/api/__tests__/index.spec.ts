@@ -158,4 +158,26 @@ describe('frontend api module', () => {
     expect(mockAxiosCreate).toHaveBeenCalledTimes(2)
     expect(mockMainGet).toHaveBeenCalledWith('/v1/plugin/verify-token')
   })
+
+  it('surfaces backend validation messages on non-401 response errors', async () => {
+    await import('../index')
+
+    const backendInstance = mockAxiosCreate.mock.results[0].value
+    const responseRejected = backendInstance.interceptors.response.use.mock.calls[0][1]
+    const error = {
+      message: 'Request failed with status code 422',
+      config: { headers: {} },
+      response: {
+        status: 422,
+        data: {
+          message: 'API Key 无效或无权限',
+          errors: ['连通性验证失败'],
+        },
+      },
+    }
+
+    await expect(responseRejected(error)).rejects.toMatchObject({
+      message: 'API Key 无效或无权限',
+    })
+  })
 })

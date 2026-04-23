@@ -28,6 +28,11 @@ export const mainApi = axios.create({
   headers: { 'Content-Type': 'application/json' },
 })
 
+type ApiErrorPayload = {
+  message?: string
+  errors?: string[]
+}
+
 let isRefreshing = false
 let failedQueue: Array<{
   resolve: (token: string) => void
@@ -84,7 +89,19 @@ function setupInterceptors(instance: AxiosInstance) {
     (response) => response,
     async (error: AxiosError) => {
       const originalRequest = error.config as InternalAxiosRequestConfig & { _retry?: boolean }
+      const apiError = error as AxiosError<ApiErrorPayload>
+      const backendMessage = typeof apiError.response?.data?.message === 'string'
+        ? apiError.response.data.message.trim()
+        : ''
+      const fallbackDetail = Array.isArray(apiError.response?.data?.errors)
+        ? apiError.response?.data?.errors.find((item) => typeof item === 'string' && item.trim().length > 0)?.trim() ?? ''
+        : ''
+      const resolvedMessage = backendMessage || fallbackDetail
+
       if (!originalRequest || error.response?.status !== 401 || originalRequest._retry) {
+        if (resolvedMessage) {
+          error.message = resolvedMessage
+        }
         return Promise.reject(error)
       }
 
