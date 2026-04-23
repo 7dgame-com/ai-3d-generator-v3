@@ -31,6 +31,7 @@ export const mainApi = axios.create({
 type ApiErrorPayload = {
   message?: string
   errors?: string[]
+  detail?: string
 }
 
 let isRefreshing = false
@@ -96,11 +97,23 @@ function setupInterceptors(instance: AxiosInstance) {
       const fallbackDetail = Array.isArray(apiError.response?.data?.errors)
         ? apiError.response?.data?.errors.find((item) => typeof item === 'string' && item.trim().length > 0)?.trim() ?? ''
         : ''
-      const resolvedMessage = backendMessage || fallbackDetail
+      const backendDetail = typeof apiError.response?.data?.detail === 'string'
+        ? apiError.response.data.detail.trim()
+        : ''
+      const resolvedMessage = backendMessage || fallbackDetail || backendDetail
+      const shouldAppendDetail = Boolean(
+        backendMessage &&
+        backendDetail &&
+        backendDetail !== backendMessage &&
+        !backendMessage.includes(backendDetail)
+      )
+      const surfacedMessage = shouldAppendDetail
+        ? `${backendMessage}：${backendDetail}`
+        : resolvedMessage
 
       if (!originalRequest || error.response?.status !== 401 || originalRequest._retry) {
-        if (resolvedMessage) {
-          error.message = resolvedMessage
+        if (surfacedMessage) {
+          error.message = surfacedMessage
         }
         return Promise.reject(error)
       }

@@ -180,4 +180,26 @@ describe('frontend api module', () => {
       message: 'API Key 无效或无权限',
     })
   })
+
+  it('falls back to backend detail when the message is a generic service error', async () => {
+    await import('../index')
+
+    const backendInstance = mockAxiosCreate.mock.results[0].value
+    const responseRejected = backendInstance.interceptors.response.use.mock.calls[0][1]
+    const error = {
+      message: 'Request failed with status code 502',
+      config: { headers: {} },
+      response: {
+        status: 502,
+        data: {
+          message: 'AI 服务暂时不可用',
+          detail: 'getaddrinfo ENOTFOUND api.tripo3d.ai',
+        },
+      },
+    }
+
+    await expect(responseRejected(error)).rejects.toMatchObject({
+      message: 'AI 服务暂时不可用：getaddrinfo ENOTFOUND api.tripo3d.ai',
+    })
+  })
 })
