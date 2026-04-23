@@ -43,12 +43,15 @@ function createPollingKey(baseUrl: string): string {
 function shouldRetryOnAlternateBase(error: unknown): boolean {
   if (axios.isAxiosError(error)) {
     const status = error.response?.status;
-    if (status === 401 || status === 403 || status === 422) {
+    // Tripo has served valid keys on the .ai base while the .com base rejects
+    // the same credential during endpoint migration. Retry auth failures once
+    // on the alternate base before treating the key as invalid.
+    if (status === 422) {
       return false;
     }
 
     if (typeof status === 'number') {
-      return status >= 500 || status === 404;
+      return status === 401 || status === 403 || status >= 500 || status === 404;
     }
 
     return true;

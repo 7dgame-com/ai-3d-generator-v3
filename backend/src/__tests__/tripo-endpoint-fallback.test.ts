@@ -13,6 +13,16 @@ function timeoutAxiosError(message = 'timeout') {
   };
 }
 
+function statusAxiosError(status: number, message = `HTTP ${status}`) {
+  return {
+    isAxiosError: true,
+    message,
+    response: {
+      status,
+    },
+  };
+}
+
 function jsonFetchResponse(body: unknown, status = 200, statusText = 'OK'): Response {
   return {
     ok: status >= 200 && status < 300,
@@ -25,6 +35,9 @@ function jsonFetchResponse(body: unknown, status = 200, statusText = 'OK'): Resp
 describe('Tripo3DAdapter endpoint fallback', () => {
   beforeEach(() => {
     jest.clearAllMocks();
+    mockedAxios.get.mockReset();
+    mockedAxios.post.mockReset();
+    mockedAxios.isAxiosError.mockReset();
     mockedAxios.isAxiosError.mockImplementation((error) => Boolean((error as { isAxiosError?: boolean })?.isAxiosError));
     global.fetch = jest.fn();
   });
@@ -32,6 +45,31 @@ describe('Tripo3DAdapter endpoint fallback', () => {
   it('falls back to the secondary Tripo base when verifyApiKey times out on the primary base', async () => {
     mockedAxios.get
       .mockRejectedValueOnce(timeoutAxiosError())
+      .mockResolvedValueOnce({ data: { code: 0 } } as never);
+
+    const adapter = new Tripo3DAdapter();
+
+    await expect(adapter.verifyApiKey('api-key')).resolves.toBeUndefined();
+
+    expect(mockedAxios.get).toHaveBeenNthCalledWith(
+      1,
+      'https://api.tripo3d.com/v2/openapi/user/balance',
+      expect.objectContaining({
+        headers: { Authorization: 'Bearer api-key' },
+      })
+    );
+    expect(mockedAxios.get).toHaveBeenNthCalledWith(
+      2,
+      'https://api.tripo3d.ai/v2/openapi/user/balance',
+      expect.objectContaining({
+        headers: { Authorization: 'Bearer api-key' },
+      })
+    );
+  });
+
+  it('falls back to the secondary Tripo base when verifyApiKey gets a 401 on the primary base', async () => {
+    mockedAxios.get
+      .mockRejectedValueOnce(statusAxiosError(401, 'Authentication failed'))
       .mockResolvedValueOnce({ data: { code: 0 } } as never);
 
     const adapter = new Tripo3DAdapter();
@@ -73,6 +111,38 @@ describe('Tripo3DAdapter endpoint fallback', () => {
     expect(balance).toEqual({
       available: 88,
       frozen: 5,
+    });
+    expect(mockedAxios.get).toHaveBeenNthCalledWith(
+      1,
+      'https://api.tripo3d.com/v2/openapi/user/balance',
+      expect.any(Object)
+    );
+    expect(mockedAxios.get).toHaveBeenNthCalledWith(
+      2,
+      'https://api.tripo3d.ai/v2/openapi/user/balance',
+      expect.any(Object)
+    );
+  });
+
+  it('falls back to the secondary Tripo base when getBalance gets a 401 on the primary base', async () => {
+    mockedAxios.get
+      .mockRejectedValueOnce(statusAxiosError(401, 'Authentication failed'))
+      .mockResolvedValueOnce({
+        data: {
+          code: 0,
+          data: {
+            balance: 500,
+            frozen: 0,
+          },
+        },
+      } as never);
+
+    const adapter = new Tripo3DAdapter();
+    const balance = await adapter.getBalance('api-key');
+
+    expect(balance).toEqual({
+      available: 500,
+      frozen: 0,
     });
     expect(mockedAxios.get).toHaveBeenNthCalledWith(
       1,
