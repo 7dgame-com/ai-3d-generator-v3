@@ -59,6 +59,7 @@ describe('provider reverse proxy config', () => {
     expect(nginxTemplate).not.toContain('# __CONFIG_LOCATIONS__')
     expect(ai3dFrontendBlock).not.toContain('APP_CONFIG_')
     expect(ai3dBackendBlock).not.toContain('APP_CONFIG_')
+    expect(ai3dBackendBlock).toContain('APP_API_1_URL=http://api:80')
   })
 
   it('registers Vite reverse proxies for Tripo3D and Hyper3D', () => {

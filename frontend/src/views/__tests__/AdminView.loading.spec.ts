@@ -204,4 +204,31 @@ describe('AdminView initial loading skeletons', () => {
     expect(wrapper.find('[data-test="site-power-skeleton"]').exists()).toBe(false)
     expect(wrapper.find('[data-test="empty-state"]').text()).toContain(i18n.global.t('admin.quotaEmpty'))
   })
+
+  it('does not coerce missing raw provider credits to zero', async () => {
+    mocks.getEnabledProviders.mockResolvedValue({ data: { providers: ['tripo3d'] } })
+    mocks.getAdminConfig.mockResolvedValue({ data: { configured: false } })
+    mocks.getAdminBalance.mockResolvedValue({ data: { configured: false } })
+    mocks.getAdminUsage.mockResolvedValue({
+      data: {
+        totalCredits: 0,
+        totalPower: 0,
+        userRanking: [],
+        dailyTrend: [],
+      },
+    })
+    mocks.getSitePowerStatus.mockResolvedValue({ data: { data: createQuotaStatus() } })
+
+    const wrapper = mount(AdminView, {
+      global: {
+        plugins: [i18n],
+        stubs: globalStubs,
+      },
+    })
+
+    await flushPromises()
+
+    expect(wrapper.text()).toContain('原始 credits：-')
+    expect(wrapper.text()).not.toContain('原始 credits：0')
+  })
 })

@@ -111,12 +111,7 @@
           </div>
 
           <p class="provider-footnote">
-            {{
-              t('admin.balancePower', {
-                availablePower: balances[provider]?.availablePower ?? 0,
-                available: balances[provider]?.available ?? 0,
-              })
-            }}
+            {{ formatProviderBalanceFootnote(provider) }}
           </p>
 
           <div class="provider-actions">
@@ -843,6 +838,14 @@ function formatRawCredits(value?: number) {
     return '-'
   }
   return value.toFixed(2)
+}
+
+function formatProviderBalanceFootnote(provider: string) {
+  const balance = balances[provider]
+  return t('admin.balancePower', {
+    availablePower: balance?.availablePower ?? 0,
+    available: formatRawCredits(balance?.available),
+  })
 }
 
 function poolFillStyle(status: PowerAccountStatus) {
