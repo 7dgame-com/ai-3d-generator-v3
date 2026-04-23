@@ -16,6 +16,18 @@ const TRIPO_MODEL_VERSION = process.env.TRIPO_MODEL_VERSION || 'P1-20260311';
 const TRIPO_IMAGE_FILE_TYPE = 'image';
 const TRIPO_POLLING_KEY_PREFIX = 'tripo-base:';
 
+type FallbackAttempt = {
+  baseUrl: string;
+  detail: string;
+};
+
+type FallbackAwareError = Error & {
+  status?: number;
+  code?: string | number;
+  detail?: string;
+  fallbackAttempts?: FallbackAttempt[];
+};
+
 function getOrderedBaseUrls(preferredBaseUrl?: string): string[] {
   if (!preferredBaseUrl || !TRIPO_API_BASES.includes(preferredBaseUrl as (typeof TRIPO_API_BASES)[number])) {
     return [...TRIPO_API_BASES];
@@ -38,6 +50,85 @@ function extractPollingBaseUrl(pollingKey?: string): string | undefined {
 
 function createPollingKey(baseUrl: string): string {
   return `${TRIPO_POLLING_KEY_PREFIX}${baseUrl}`;
+}
+
+function summarizeBaseUrl(baseUrl: string): string {
+  try {
+    return new URL(baseUrl).host;
+  } catch {
+    return baseUrl;
+  }
+}
+
+function extractResponseMessage(data: unknown): string {
+  if (typeof data === 'string') {
+    return data.trim();
+  }
+
+  if (typeof data === 'object' && data !== null) {
+    const message = 'message' in data ? data.message : undefined;
+    if (typeof message === 'string') {
+      return message.trim();
+    }
+  }
+
+  return '';
+}
+
+function joinErrorParts(parts: Array<string | undefined>): string {
+  return [...new Set(parts.map((part) => part?.trim()).filter((part): part is string => Boolean(part)))].join(' ');
+}
+
+function describeRequestError(error: unknown): string {
+  if (axios.isAxiosError(error)) {
+    return joinErrorParts([
+      typeof error.response?.status === 'number' ? `HTTP ${error.response.status}` : undefined,
+      extractResponseMessage(error.response?.data),
+      typeof error.code === 'string' ? error.code : undefined,
+      error.message,
+    ]) || 'Unknown Axios error';
+  }
+
+  const status = typeof error === 'object' && error !== null && 'status' in error
+    ? Number((error as { status?: number }).status)
+    : NaN;
+
+  if (Number.isFinite(status)) {
+    const typedError = error as { message?: string };
+    return joinErrorParts([`HTTP ${status}`, typedError.message]) || `HTTP ${status}`;
+  }
+
+  if (error instanceof Error) {
+    return error.message.trim() || error.name || 'Unknown error';
+  }
+
+  if (typeof error === 'string') {
+    return error.trim() || 'Unknown error';
+  }
+
+  return 'Unknown error';
+}
+
+function formatFallbackAttempts(attempts: FallbackAttempt[]): string {
+  return attempts
+    .map(({ baseUrl, detail }) => `${summarizeBaseUrl(baseUrl)} -> ${detail}`)
+    .join(' | ');
+}
+
+function enrichErrorWithFallbackAttempts(error: unknown, attempts: FallbackAttempt[]): FallbackAwareError {
+  const detail = formatFallbackAttempts(attempts) || describeRequestError(error);
+
+  if (error instanceof Error) {
+    const typedError = error as FallbackAwareError;
+    typedError.detail = detail;
+    typedError.fallbackAttempts = attempts;
+    return typedError;
+  }
+
+  return Object.assign(new Error(detail), {
+    detail,
+    fallbackAttempts: attempts,
+  });
 }
 
 function shouldRetryOnAlternateBase(error: unknown): boolean {
@@ -70,10 +161,12 @@ function shouldRetryOnAlternateBase(error: unknown): boolean {
 
 async function withBaseFallback<T>(
   request: (baseUrl: string) => Promise<T>,
-  preferredBaseUrl?: string
+  preferredBaseUrl?: string,
+  operationName = 'request'
 ): Promise<{ result: T; baseUrl: string }> {
   const baseUrls = getOrderedBaseUrls(preferredBaseUrl);
   let lastError: unknown;
+  const attempts: FallbackAttempt[] = [];
 
   for (let index = 0; index < baseUrls.length; index += 1) {
     const baseUrl = baseUrls[index];
@@ -86,13 +179,26 @@ async function withBaseFallback<T>(
     } catch (error) {
       lastError = error;
       const isLastBase = index === baseUrls.length - 1;
-      if (isLastBase || !shouldRetryOnAlternateBase(error)) {
-        throw error;
+      const detail = describeRequestError(error);
+      const shouldRetry = !isLastBase && shouldRetryOnAlternateBase(error);
+      attempts.push({ baseUrl, detail });
+
+      console.warn(`[Tripo3DAdapter] ${operationName} failed on ${summarizeBaseUrl(baseUrl)}`, {
+        retryingAlternateBase: shouldRetry,
+        detail,
+      });
+
+      if (!shouldRetry) {
+        const enrichedError = enrichErrorWithFallbackAttempts(error, attempts);
+        console.error(`[Tripo3DAdapter] ${operationName} exhausted Tripo base fallback`, {
+          attempts,
+        });
+        throw enrichedError;
       }
     }
   }
 
-  throw lastError instanceof Error ? lastError : new Error('Tripo3D request failed');
+  throw enrichErrorWithFallbackAttempts(lastError, attempts);
 }
 
 async function parseFetchJson<T>(response: Response): Promise<T> {
@@ -132,16 +238,17 @@ export class Tripo3DAdapter implements IProviderAdapter {
           headers: { Authorization: `Bearer ${apiKey}` },
           timeout: 10000,
         })
-      );
+      , undefined, 'verifyApiKey');
     } catch (err) {
+      const detail = (err as FallbackAwareError).detail || describeRequestError(err);
       if (axios.isAxiosError(err)) {
         const status = err.response?.status;
         if (status === 401 || status === 403) {
           throw Object.assign(new Error('API Key 无效或无权限'), { code: 4001, status: 422 });
         }
-        throw Object.assign(new Error('AI 服务暂时不可用'), { code: 3002, status: 502, detail: err.message });
+        throw Object.assign(new Error('AI 服务暂时不可用'), { code: 3002, status: 502, detail });
       }
-      throw Object.assign(new Error('AI 服务暂时不可用'), { code: 3002, status: 502, detail: String(err) });
+      throw Object.assign(new Error('AI 服务暂时不可用'), { code: 3002, status: 502, detail });
     }
   }
 
@@ -189,7 +296,7 @@ export class Tripo3DAdapter implements IProviderAdapter {
       }
 
       return resp.data;
-    });
+    }, undefined, 'createTask');
 
     const taskId: string = result.data.task_id;
     return { taskId, pollingKey: createPollingKey(baseUrl), estimatedCost: 30 };
@@ -222,7 +329,7 @@ export class Tripo3DAdapter implements IProviderAdapter {
           };
         };
       }>(response))
-    , preferredBaseUrl);
+    , preferredBaseUrl, 'getTaskStatus');
 
     const typedResponseData = responseData as {
       code: number;
@@ -288,7 +395,7 @@ export class Tripo3DAdapter implements IProviderAdapter {
         headers: { Authorization: `Bearer ${apiKey}` },
         timeout: 10000,
       })
-    );
+    , undefined, 'getBalance');
 
     const data = resp.data?.data ?? resp.data;
     const balancePayload =

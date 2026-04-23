@@ -17,6 +17,18 @@ import { normalizeTaskBilling } from '../utils/taskBilling';
 
 export const adminRouter = Router();
 
+function resolveErrorDetail(error: { detail?: string; message?: string }): string {
+  if (typeof error.detail === 'string' && error.detail.trim().length > 0) {
+    return error.detail.trim();
+  }
+
+  if (typeof error.message === 'string' && error.message.trim().length > 0) {
+    return error.message.trim();
+  }
+
+  return '未知上游错误';
+}
+
 function resolveAdminProviderId(rawProviderId: unknown): string | null {
   const providerId = typeof rawProviderId === 'string' && rawProviderId.length > 0
     ? rawProviderId
@@ -107,10 +119,24 @@ adminRouter.put('/config', async (req: Request, res: Response): Promise<void> =>
   } catch (err) {
     const e = err as { code?: number; status?: number; message?: string; detail?: string };
     if (e.status === 422) {
+      console.warn('[AdminController] PUT /config verifyApiKey rejected', {
+        providerId,
+        code: e.code,
+        status: e.status,
+        message: e.message,
+      });
       res.status(422).json({ code: e.code ?? 4001, message: e.message ?? 'API Key 无效或无权限', errors: ['连通性验证失败'] });
       return;
     }
-    res.status(502).json({ code: e.code ?? 3002, message: e.message ?? 'AI 服务暂时不可用', detail: e.detail });
+    const detail = resolveErrorDetail(e);
+    console.error('[AdminController] PUT /config verifyApiKey unavailable', {
+      providerId,
+      code: e.code,
+      status: e.status,
+      message: e.message,
+      detail,
+    });
+    res.status(502).json({ code: e.code ?? 3002, message: e.message ?? 'AI 服务暂时不可用', detail });
     return;
   }
 

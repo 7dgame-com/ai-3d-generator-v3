@@ -4,6 +4,8 @@ import { Tripo3DAdapter } from '../adapters/Tripo3DAdapter';
 jest.mock('axios');
 
 const mockedAxios = axios as jest.Mocked<typeof axios>;
+let consoleWarnSpy: jest.SpyInstance;
+let consoleErrorSpy: jest.SpyInstance;
 
 function timeoutAxiosError(message = 'timeout') {
   return {
@@ -23,6 +25,14 @@ function statusAxiosError(status: number, message = `HTTP ${status}`) {
   };
 }
 
+function networkAxiosError(code: string, message = '') {
+  return {
+    isAxiosError: true,
+    code,
+    message,
+  };
+}
+
 function jsonFetchResponse(body: unknown, status = 200, statusText = 'OK'): Response {
   return {
     ok: status >= 200 && status < 300,
@@ -35,11 +45,18 @@ function jsonFetchResponse(body: unknown, status = 200, statusText = 'OK'): Resp
 describe('Tripo3DAdapter endpoint fallback', () => {
   beforeEach(() => {
     jest.clearAllMocks();
+    consoleWarnSpy = jest.spyOn(console, 'warn').mockImplementation(() => undefined);
+    consoleErrorSpy = jest.spyOn(console, 'error').mockImplementation(() => undefined);
     mockedAxios.get.mockReset();
     mockedAxios.post.mockReset();
     mockedAxios.isAxiosError.mockReset();
     mockedAxios.isAxiosError.mockImplementation((error) => Boolean((error as { isAxiosError?: boolean })?.isAxiosError));
     global.fetch = jest.fn();
+  });
+
+  afterEach(() => {
+    consoleWarnSpy.mockRestore();
+    consoleErrorSpy.mockRestore();
   });
 
   it('falls back to the secondary Tripo base when verifyApiKey times out on the primary base', async () => {
@@ -88,6 +105,60 @@ describe('Tripo3DAdapter endpoint fallback', () => {
       'https://api.tripo3d.ai/v2/openapi/user/balance',
       expect.objectContaining({
         headers: { Authorization: 'Bearer api-key' },
+      })
+    );
+  });
+
+  it('aggregates Tripo base failure details when verifyApiKey fails on every base', async () => {
+    mockedAxios.get
+      .mockRejectedValueOnce(statusAxiosError(401, 'Authentication failed'))
+      .mockRejectedValueOnce(networkAxiosError('ENOTFOUND'));
+
+    const adapter = new Tripo3DAdapter();
+    const verifyPromise = adapter.verifyApiKey('api-key');
+
+    await expect(verifyPromise).rejects.toMatchObject({
+      code: 3002,
+      status: 502,
+      message: 'AI 服务暂时不可用',
+      detail: expect.stringContaining('api.tripo3d.com'),
+    });
+    await expect(verifyPromise).rejects.toMatchObject({
+      detail: expect.stringContaining('HTTP 401'),
+    });
+    await expect(verifyPromise).rejects.toMatchObject({
+      detail: expect.stringContaining('api.tripo3d.ai'),
+    });
+    await expect(verifyPromise).rejects.toMatchObject({
+      detail: expect.stringContaining('ENOTFOUND'),
+    });
+    expect(consoleWarnSpy).toHaveBeenCalledWith(
+      '[Tripo3DAdapter] verifyApiKey failed on api.tripo3d.com',
+      expect.objectContaining({
+        retryingAlternateBase: true,
+        detail: 'HTTP 401 Authentication failed',
+      })
+    );
+    expect(consoleWarnSpy).toHaveBeenCalledWith(
+      '[Tripo3DAdapter] verifyApiKey failed on api.tripo3d.ai',
+      expect.objectContaining({
+        retryingAlternateBase: false,
+        detail: 'ENOTFOUND',
+      })
+    );
+    expect(consoleErrorSpy).toHaveBeenCalledWith(
+      '[Tripo3DAdapter] verifyApiKey exhausted Tripo base fallback',
+      expect.objectContaining({
+        attempts: [
+          expect.objectContaining({
+            baseUrl: 'https://api.tripo3d.com/v2/openapi',
+            detail: 'HTTP 401 Authentication failed',
+          }),
+          expect.objectContaining({
+            baseUrl: 'https://api.tripo3d.ai/v2/openapi',
+            detail: 'ENOTFOUND',
+          }),
+        ],
       })
     );
   });
