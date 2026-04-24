@@ -31,7 +31,7 @@ server {
         proxy_redirect off;
     }
 
-    location /tripo-ai/ {
+    location /tripo-alt/ {
         proxy_pass https://api.tripo3d.ai/v2/openapi/;
         proxy_ssl_server_name on;
         proxy_set_header Host api.tripo3d.ai;
