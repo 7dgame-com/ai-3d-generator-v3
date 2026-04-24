@@ -15,9 +15,9 @@ import {
 } from '../services/prepareToken';
 import { computeExpiresAt } from '../utils/urlExpiry';
 import { getProviderDefaultCreditCost } from '../utils/taskBilling';
+import { getTripoRegion } from '../services/tripoRegion';
 
 const DEFAULT_MAX_THROTTLE_DELAY_MS = 30000;
-const TRIPO_API_PROXY_BASE = '/tripo';
 const HYPER3D_API_PROXY_BASE = '/hyper';
 const TRIPO_MODEL_VERSION = process.env.TRIPO_MODEL_VERSION || 'P1-20260311';
 const DIRECT_PROVIDER_STATUS_KEY_PREFIX = 'direct:';
@@ -47,13 +47,14 @@ function getTaskIdParam(req: Request): string | null {
   return typeof taskId === 'string' && taskId.length > 0 ? taskId : null;
 }
 
-function getProviderApiConfig(providerId: string): { apiBaseUrl: string; modelVersion?: string } {
+async function getProviderApiConfig(providerId: string): Promise<{ apiBaseUrl: string; modelVersion?: string }> {
   if (providerId === 'hyper3d') {
     return { apiBaseUrl: HYPER3D_API_PROXY_BASE };
   }
 
+  const region = await getTripoRegion();
   return {
-    apiBaseUrl: TRIPO_API_PROXY_BASE,
+    apiBaseUrl: region === 'ai' ? '/tripo-ai' : '/tripo',
     modelVersion: TRIPO_MODEL_VERSION,
   };
 }
@@ -336,7 +337,7 @@ export async function prepareTask(req: Request, res: Response): Promise<void> {
     tempTaskId,
     estimatedPower,
   });
-  const providerApiConfig = getProviderApiConfig(providerId);
+  const providerApiConfig = await getProviderApiConfig(providerId);
   const mode = await getApiMode();
 
   res.set('Cache-Control', 'no-store');

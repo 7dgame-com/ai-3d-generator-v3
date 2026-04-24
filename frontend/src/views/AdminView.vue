@@ -93,6 +93,12 @@
                 {{ t('admin.configuredKey') }}:
                 <span>{{ configs[provider]?.apiKeyMasked || t('admin.notConfigured') }}</span>
               </p>
+              <p
+                v-if="provider === 'tripo3d' && configs[provider]?.region"
+                class="provider-region-label"
+              >
+                {{ configs[provider]?.region === 'ai' ? t('admin.regionInternational') : t('admin.regionDomestic') }}
+              </p>
             </div>
             <span class="status-pill" :data-ready="String(configs[provider]?.configured ?? false)">
               {{ configs[provider]?.configured ? t('admin.providerStatusConfigured') : t('admin.providerStatusMissing') }}
@@ -490,7 +496,7 @@ interface AdminUsageSnapshot {
 
 const { t, locale } = useI18n()
 const providers = ref<string[]>([])
-const configs = reactive<Record<string, { configured: boolean; apiKeyMasked?: string }>>({})
+const configs = reactive<Record<string, { configured: boolean; apiKeyMasked?: string; region?: 'ai' | 'com' }>>({})
 const balances = reactive<Record<string, { available?: number; availablePower?: number; configured?: boolean } | undefined>>({})
 const draftKeys = reactive<Record<string, string>>({})
 const adminUsage = ref<AdminUsageSnapshot | null>(null)
@@ -683,7 +689,12 @@ onBeforeUnmount(() => {
 })
 
 async function loadConfig(provider: string) {
-  configs[provider] = (await getAdminConfig(provider)).data
+  const { data } = await getAdminConfig(provider)
+  configs[provider] = {
+    configured: data.configured,
+    apiKeyMasked: data.apiKeyMasked,
+    region: data.region,
+  }
 }
 
 async function loadBalance(provider: string) {
@@ -734,7 +745,10 @@ async function loadInitialUsage() {
 
 async function save(provider: string) {
   try {
-    await saveAdminConfig(draftKeys[provider], provider)
+    const { data } = await saveAdminConfig(draftKeys[provider], provider)
+    if (data.region && configs[provider]) {
+      configs[provider].region = data.region
+    }
     await Promise.all([loadConfig(provider), loadBalance(provider)])
     draftKeys[provider] = ''
     ElMessage.success(t('common.saved'))
@@ -1165,6 +1179,17 @@ function trendBarStyle(power: number, maxPower: number) {
 .provider-subtitle {
   margin: 8px 0 0;
   color: var(--ink-soft);
+}
+
+.provider-region-label {
+  display: inline-block;
+  margin: 6px 0 0;
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 600;
+  background: rgba(36, 122, 112, 0.14);
+  color: #155a54;
 }
 
 .status-pill {

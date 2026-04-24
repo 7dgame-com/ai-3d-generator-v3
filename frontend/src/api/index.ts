@@ -314,17 +314,17 @@ export const failTask = (taskId: string, payload: {
 }) => backendApi.post<{ success: boolean }>(`/tasks/${taskId}/fail`, payload)
 
 export const getAdminConfig = (providerId?: string) =>
-  backendApi.get<{ configured: boolean; apiKeyMasked?: string }>('/admin/config', {
+  backendApi.get<{ configured: boolean; apiKeyMasked?: string; region?: 'ai' | 'com' }>('/admin/config', {
     params: providerId ? { provider_id: providerId } : undefined,
   })
 
 export const saveAdminConfig = (apiKey: string, providerId: string) =>
-  backendApi.put<{ success: boolean }>('/admin/config', { apiKey, provider_id: providerId })
+  backendApi.put<{ success: boolean; region?: 'ai' | 'com' }>('/admin/config', { apiKey, provider_id: providerId })
 
 export const getEnabledProviders = () => backendApi.get<{ providers: string[] }>('/admin/providers')
 
 export const getAdminBalance = (providerId: string) =>
-  backendApi.get<{ configured: boolean; available?: number; availablePower?: number; frozen?: number }>('/admin/balance', {
+  backendApi.get<{ configured: boolean; available?: number; availablePower?: number; frozen?: number; region?: 'ai' | 'com' }>('/admin/balance', {
     params: { provider_id: providerId },
   })
 

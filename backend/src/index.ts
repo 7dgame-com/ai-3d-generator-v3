@@ -14,8 +14,9 @@ import { startSiteScheduler, stopSiteScheduler } from './services/siteQuotaSched
 import { startTimeoutGuardian, stopTimeoutGuardian } from './services/timeoutGuardian';
 import { parseEnabledProviders } from './config/providers';
 import { providerRegistry } from './adapters/ProviderRegistry';
-import { tripo3dAdapter } from './adapters/Tripo3DAdapter';
+import { Tripo3DAdapter } from './adapters/Tripo3DAdapter';
 import { hyper3dAdapter } from './adapters/Hyper3DAdapter';
+import { getTripoRegion } from './services/tripoRegion';
 import adminRoutes from './routes/admin';
 import directTaskRoutes from './routes/directTask';
 import taskRoutes from './routes/task';
@@ -74,8 +75,8 @@ app.listen(PORT, async () => {
 
     // ========== 注册启用的 Provider 适配器 ==========
     const enabledProviders = parseEnabledProviders();
-    const adapterMap: Record<string, typeof tripo3dAdapter | typeof hyper3dAdapter> = {
-      tripo3d: tripo3dAdapter,
+    const adapterMap: Record<string, typeof hyper3dAdapter | Tripo3DAdapter> = {
+      tripo3d: new Tripo3DAdapter(getTripoRegion),
       hyper3d: hyper3dAdapter,
     };
     for (const providerId of enabledProviders) {

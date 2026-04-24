@@ -61,6 +61,8 @@ export default {
     balancePower: '可用余额：{availablePower} power（原始 credits：{available}）',
     balancePowerLabel: '可用 power',
     rawBalance: '原始 credits',
+    regionInternational: '国际版 .ai',
+    regionDomestic: '国内版 .com',
     providerStatusConfigured: '已配置',
     providerStatusMissing: '待配置',
     usageTitle: '全局用量',

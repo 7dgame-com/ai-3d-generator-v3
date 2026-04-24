@@ -61,6 +61,8 @@ export default {
     balancePower: 'ยอดที่ใช้ได้: {availablePower} power (credits เดิม: {available})',
     balancePowerLabel: 'power ที่ใช้ได้',
     rawBalance: 'credits ดิบ',
+    regionInternational: 'เวอร์ชันสากล (.ai)',
+    regionDomestic: 'เวอร์ชันจีน (.com)',
     providerStatusConfigured: 'ตั้งค่าแล้ว',
     providerStatusMissing: 'รอตั้งค่า',
     usageTitle: 'การใช้งานรวม',

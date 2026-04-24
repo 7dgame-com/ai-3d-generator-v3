@@ -14,20 +14,9 @@ import { query } from '../db/connection';
 import { encrypt, decrypt } from '../services/crypto';
 import { providerRegistry } from '../adapters/ProviderRegistry';
 import { normalizeTaskBilling } from '../utils/taskBilling';
+import { probeRegion, TripoRegion } from '../services/regionProbe';
 
 export const adminRouter = Router();
-
-function resolveErrorDetail(error: { detail?: string; message?: string }): string {
-  if (typeof error.detail === 'string' && error.detail.trim().length > 0) {
-    return error.detail.trim();
-  }
-
-  if (typeof error.message === 'string' && error.message.trim().length > 0) {
-    return error.message.trim();
-  }
-
-  return '未知上游错误';
-}
 
 function resolveAdminProviderId(rawProviderId: unknown): string | null {
   const providerId = typeof rawProviderId === 'string' && rawProviderId.length > 0
@@ -72,6 +61,20 @@ adminRouter.get('/config', async (req: Request, res: Response): Promise<void> =>
 
     // 脱敏：前 8 位 + ****
     const masked = plaintext.slice(0, 8) + '****';
+
+    // tripo3d: 额外返回区域信息
+    if (providerId === 'tripo3d') {
+      const regionRows = await query<Array<{ value: string }>>(
+        'SELECT `value` FROM system_config WHERE `key` = ? LIMIT 1',
+        ['tripo3d_region']
+      );
+      const regionValue = regionRows?.[0]?.value;
+      const region: TripoRegion | undefined =
+        regionValue === 'ai' || regionValue === 'com' ? regionValue : undefined;
+      res.json({ configured: true, apiKeyMasked: masked, region });
+      return;
+    }
+
     res.json({ configured: true, apiKeyMasked: masked });
   } catch (err) {
     console.error('[AdminController] GET /config error:', err);
@@ -97,7 +100,7 @@ adminRouter.put('/config', async (req: Request, res: Response): Promise<void> =>
     return;
   }
 
-  // 获取适配器进行格式和连通性验证
+  // 获取适配器进行格式验证
   const adapter = providerRegistry.get(providerId);
   if (!adapter) {
     res.status(422).json({ code: 'INVALID_PROVIDER', message: '无效或未启用的服务提供商' });
@@ -113,34 +116,40 @@ adminRouter.put('/config', async (req: Request, res: Response): Promise<void> =>
     return;
   }
 
-  // 连通性验证
-  try {
-    await adapter.verifyApiKey(normalizedApiKey);
-  } catch (err) {
-    const e = err as { code?: number; status?: number; message?: string; detail?: string };
-    if (e.status === 422) {
-      console.warn('[AdminController] PUT /config verifyApiKey rejected', {
-        providerId,
-        code: e.code,
-        status: e.status,
-        message: e.message,
+  // tripo3d: 先探测区域，再保存 Key + Region
+  if (providerId === 'tripo3d') {
+    let region: TripoRegion;
+    try {
+      region = await probeRegion(normalizedApiKey);
+    } catch {
+      res.status(422).json({
+        code: 4001,
+        message: 'API Key 无效或网络不可达，请检查 Key 是否正确',
       });
-      res.status(422).json({ code: e.code ?? 4001, message: e.message ?? 'API Key 无效或无权限', errors: ['连通性验证失败'] });
       return;
     }
-    const detail = resolveErrorDetail(e);
-    console.error('[AdminController] PUT /config verifyApiKey unavailable', {
-      providerId,
-      code: e.code,
-      status: e.status,
-      message: e.message,
-      detail,
-    });
-    res.status(502).json({ code: e.code ?? 3002, message: e.message ?? 'AI 服务暂时不可用', detail });
+
+    try {
+      const encrypted = encrypt(normalizedApiKey);
+      await query(
+        `INSERT INTO system_config (\`key\`, \`value\`) VALUES (?, ?)
+         ON DUPLICATE KEY UPDATE \`value\` = VALUES(\`value\`), updated_at = CURRENT_TIMESTAMP`,
+        ['tripo3d_api_key', encrypted]
+      );
+      await query(
+        `INSERT INTO system_config (\`key\`, \`value\`) VALUES (?, ?)
+         ON DUPLICATE KEY UPDATE \`value\` = VALUES(\`value\`), updated_at = CURRENT_TIMESTAMP`,
+        ['tripo3d_region', region]
+      );
+      res.json({ success: true, region });
+    } catch (err) {
+      console.error('[AdminController] PUT /config error:', err);
+      res.status(500).json({ code: 5001, message: '服务器内部错误' });
+    }
     return;
   }
 
-  // 加密并 upsert
+  // 其他 provider: 加密并 upsert
   try {
     const encrypted = encrypt(normalizedApiKey);
     const configKey = `${providerId}_api_key`;
@@ -191,6 +200,26 @@ adminRouter.get('/balance', async (req: Request, res: Response): Promise<void> =
     }
 
     const balance = await adapter.getBalance(apiKey);
+
+    // tripo3d: 额外返回区域信息
+    if (providerId === 'tripo3d') {
+      const regionRows = await query<Array<{ value: string }>>(
+        'SELECT `value` FROM system_config WHERE `key` = ? LIMIT 1',
+        ['tripo3d_region']
+      );
+      const regionValue = regionRows?.[0]?.value;
+      const region: TripoRegion | undefined =
+        regionValue === 'ai' || regionValue === 'com' ? regionValue : undefined;
+      res.json({
+        configured: true,
+        available: balance.available,
+        availablePower: creditToPower(providerId, balance.available),
+        frozen: balance.frozen,
+        region,
+      });
+      return;
+    }
+
     res.json({
       configured: true,
       available: balance.available,

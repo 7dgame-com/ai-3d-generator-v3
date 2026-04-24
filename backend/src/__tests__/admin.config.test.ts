@@ -7,6 +7,7 @@ const mockEncrypt = jest.fn();
 const mockVerifyApiKey = jest.fn();
 const mockValidateApiKeyFormat = jest.fn();
 const mockGetEnabledIds = jest.fn(() => ['tripo3d']);
+const mockProbeRegion = jest.fn();
 let consoleErrorSpy: jest.SpyInstance;
 let consoleWarnSpy: jest.SpyInstance;
 
@@ -17,6 +18,10 @@ jest.mock('../db/connection', () => ({
 jest.mock('../services/crypto', () => ({
   encrypt: (...args: unknown[]) => mockEncrypt(...args),
   decrypt: jest.fn(),
+}));
+
+jest.mock('../services/regionProbe', () => ({
+  probeRegion: (...args: unknown[]) => mockProbeRegion(...args),
 }));
 
 jest.mock('../adapters/ProviderRegistry', () => ({
@@ -49,6 +54,7 @@ describe('admin controller config persistence', () => {
     mockVerifyApiKey.mockResolvedValue(undefined);
     mockEncrypt.mockReturnValue('encrypted:trimmed-key');
     mockQuery.mockResolvedValue({ affectedRows: 1 });
+    mockProbeRegion.mockResolvedValue('com');
   });
 
   afterEach(() => {
@@ -56,7 +62,7 @@ describe('admin controller config persistence', () => {
     consoleWarnSpy.mockRestore();
   });
 
-  it('trims API keys before verification and persistence in PUT /admin/config', async () => {
+  it('trims API keys before format validation and persistence in PUT /admin/config', async () => {
     const app = createApp();
 
     const response = await request(app)
@@ -64,9 +70,8 @@ describe('admin controller config persistence', () => {
       .send({ provider_id: 'tripo3d', apiKey: '  trimmed-key \n' });
 
     expect(response.status).toBe(200);
-    expect(response.body).toEqual({ success: true });
+    expect(response.body).toEqual({ success: true, region: 'com' });
     expect(mockValidateApiKeyFormat).toHaveBeenCalledWith('trimmed-key');
-    expect(mockVerifyApiKey).toHaveBeenCalledWith('trimmed-key');
     expect(mockEncrypt).toHaveBeenCalledWith('trimmed-key');
     expect(mockQuery).toHaveBeenCalledWith(
       expect.stringContaining('INSERT INTO system_config'),
@@ -74,34 +79,17 @@ describe('admin controller config persistence', () => {
     );
   });
 
-  it('returns a non-empty detail when connectivity verification fails with a blank detail', async () => {
+  it('rejects empty API key with 422', async () => {
     const app = createApp();
-    mockVerifyApiKey.mockRejectedValue(
-      Object.assign(new Error('AI 服务暂时不可用'), {
-        code: 3002,
-        status: 502,
-        detail: '',
-      })
-    );
 
     const response = await request(app)
       .put('/admin/config')
-      .send({ provider_id: 'tripo3d', apiKey: 'valid-key' });
+      .send({ provider_id: 'tripo3d', apiKey: '   ' });
 
-    expect(response.status).toBe(502);
-    expect(response.body).toEqual({
-      code: 3002,
-      message: 'AI 服务暂时不可用',
-      detail: 'AI 服务暂时不可用',
+    expect(response.status).toBe(422);
+    expect(response.body).toMatchObject({
+      code: 4001,
+      message: '参数错误',
     });
-    expect(consoleErrorSpy).toHaveBeenCalledWith(
-      '[AdminController] PUT /config verifyApiKey unavailable',
-      expect.objectContaining({
-        providerId: 'tripo3d',
-        code: 3002,
-        status: 502,
-        detail: 'AI 服务暂时不可用',
-      })
-    );
   });
 });

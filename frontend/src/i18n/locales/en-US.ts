@@ -61,6 +61,8 @@ export default {
     balancePower: 'Available: {availablePower} power (raw credits: {available})',
     balancePowerLabel: 'Available power',
     rawBalance: 'Raw credits',
+    regionInternational: 'International (.ai)',
+    regionDomestic: 'China (.com)',
     providerStatusConfigured: 'Configured',
     providerStatusMissing: 'Needs setup',
     usageTitle: 'Global Usage',
