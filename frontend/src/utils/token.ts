@@ -50,6 +50,9 @@ export function requestParentTokenRefresh(): Promise<{ accessToken: string } | n
     }
 
     window.addEventListener('message', onMessage)
-    window.parent.postMessage({ type: 'TOKEN_REFRESH_REQUEST' }, '*')
+    window.parent.postMessage(
+      { type: 'TOKEN_REFRESH_REQUEST', id: `token-refresh-request-${Date.now()}` },
+      '*'
+    )
   })
 }
