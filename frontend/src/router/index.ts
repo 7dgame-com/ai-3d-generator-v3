@@ -1,6 +1,7 @@
 import { createRouter, createWebHistory } from 'vue-router'
 import { isInIframe } from '../utils/token'
 import { useAuthSession } from '../composables/useAuthSession'
+import { notifyHostPluginUrlChanged } from '../utils/hostEvents'
 
 declare module 'vue-router' {
   interface RouteMeta {
@@ -73,6 +74,10 @@ router.beforeEach(async (to) => {
     return '/no-permission'
   }
   return true
+})
+
+router.afterEach((to) => {
+  notifyHostPluginUrlChanged(to.fullPath)
 })
 
 export default router
