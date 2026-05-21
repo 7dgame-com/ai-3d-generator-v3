@@ -3,6 +3,7 @@ import axios from 'axios';
 import { query } from '../db/connection';
 import { AuthenticatedRequest } from '../middleware/auth';
 import { isDownloadExpired } from '../utils/urlExpiry';
+import { createProviderStreamRequestConfig } from '../utils/providerProxy';
 
 interface TaskThumbnailRow {
   task_id: string;
@@ -37,10 +38,7 @@ export async function downloadThumbnail(req: AuthenticatedRequest, res: Response
   }
 
   try {
-    const upstream = await axios.get(task.thumbnail_url, {
-      responseType: 'stream',
-      timeout: 30000,
-    });
+    const upstream = await axios.get(task.thumbnail_url, createProviderStreamRequestConfig());
 
     res.setHeader('Content-Type', upstream.headers['content-type'] || 'image/webp');
     const contentLength = upstream.headers['content-length'];

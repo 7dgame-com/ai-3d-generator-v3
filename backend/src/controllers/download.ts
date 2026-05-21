@@ -13,6 +13,7 @@ import axios from 'axios';
 import { query } from '../db/connection';
 import { AuthenticatedRequest } from '../middleware/auth';
 import { isDownloadExpired } from '../utils/urlExpiry';
+import { createProviderStreamRequestConfig } from '../utils/providerProxy';
 
 type DownloadFormat = 'glb' | 'fbx' | 'obj';
 const ALLOWED_FORMATS: DownloadFormat[] = ['glb', 'fbx', 'obj'];
@@ -75,10 +76,7 @@ export async function downloadFile(req: AuthenticatedRequest, res: Response): Pr
   }
 
   try {
-    const upstream = await axios.get(task.output_url, {
-      responseType: 'stream',
-      timeout: 30000,
-    });
+    const upstream = await axios.get(task.output_url, createProviderStreamRequestConfig());
 
     res.setHeader('Content-Disposition', `attachment; filename="${task.task_id}.${format}"`);
     res.setHeader('Content-Type', 'application/octet-stream');

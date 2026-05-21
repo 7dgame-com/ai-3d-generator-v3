@@ -1,6 +1,6 @@
 import axios from 'axios';
 import type { Response } from 'express';
-import { downloadThumbnail } from '../controllers/thumbnail';
+import { downloadFile } from '../controllers/download';
 
 const mockQuery = jest.fn();
 const mockIsDownloadExpired = jest.fn();
@@ -23,40 +23,19 @@ function createResponse() {
   } as unknown as Response;
 }
 
-describe('thumbnail controller', () => {
+describe('download controller provider proxy', () => {
   beforeEach(() => {
     jest.clearAllMocks();
   });
 
-  it('returns 410 when thumbnail URL is expired', async () => {
-    mockQuery.mockResolvedValueOnce([
-      {
-        task_id: 'task-004',
-        status: 'success',
-        thumbnail_url: 'https://cdn.example.com/preview.webp',
-        completed_at: '2026-04-08T00:01:00.000Z',
-      },
-    ]);
-    mockIsDownloadExpired.mockReturnValue(true);
-
-    const req = {
-      params: { taskId: 'task-004' },
-      user: { userId: 1 },
-    } as unknown as Parameters<typeof downloadThumbnail>[0];
-    const res = createResponse();
-
-    await downloadThumbnail(req, res);
-
-    expect((res.status as jest.Mock)).toHaveBeenCalledWith(410);
-  });
-
-  it('proxies thumbnail image bytes for a valid task thumbnail', async () => {
+  it('proxies provider downloads with IPv4-only stream agents', async () => {
     const pipe = jest.fn();
     mockQuery.mockResolvedValueOnce([
       {
         task_id: 'task-005',
         status: 'success',
-        thumbnail_url: 'https://cdn.example.com/preview.webp',
+        provider_id: 'tripo3d',
+        output_url: 'https://cdn.example.com/model.glb',
         completed_at: '2026-04-08T00:01:00.000Z',
       },
     ]);
@@ -64,27 +43,30 @@ describe('thumbnail controller', () => {
     mockedAxios.get.mockResolvedValueOnce({
       data: { pipe },
       headers: {
-        'content-type': 'image/webp',
         'content-length': '1234',
       },
     } as never);
 
     const req = {
       params: { taskId: 'task-005' },
+      query: {},
       user: { userId: 1 },
-    } as unknown as Parameters<typeof downloadThumbnail>[0];
+    } as unknown as Parameters<typeof downloadFile>[0];
     const res = createResponse();
 
-    await downloadThumbnail(req, res);
+    await downloadFile(req, res);
 
-    expect(mockedAxios.get).toHaveBeenCalledWith('https://cdn.example.com/preview.webp', {
+    expect(mockedAxios.get).toHaveBeenCalledWith('https://cdn.example.com/model.glb', {
       responseType: 'stream',
       timeout: 30000,
       httpAgent: expect.anything(),
       httpsAgent: expect.anything(),
       proxy: false,
     });
-    expect((res.setHeader as jest.Mock)).toHaveBeenCalledWith('Content-Type', 'image/webp');
+    expect((res.setHeader as jest.Mock)).toHaveBeenCalledWith(
+      'Content-Disposition',
+      'attachment; filename="task-005.glb"'
+    );
     expect(pipe).toHaveBeenCalledWith(res);
   });
 });
