@@ -4,6 +4,7 @@ import {
   SchemaHealthError,
   ensureSchemaReady,
   isAutoInitSchemaEnabled,
+  isAutoMigrateSchemaEnabled,
   runKnownSchemaMigrations,
   splitSqlStatements,
 } from '../db/schemaHealth';
@@ -49,6 +50,8 @@ describe('schema health checks', () => {
       .mockResolvedValueOnce([{ db: 'ai_3d_generator_v3' }])
       .mockResolvedValueOnce([])
       .mockResolvedValueOnce([{ db: 'ai_3d_generator_v3' }])
+      .mockResolvedValueOnce(REQUIRED_TABLES.map((table) => ({ table_name: table })))
+      .mockResolvedValueOnce([{ db: 'ai_3d_generator_v3' }])
       .mockResolvedValueOnce(REQUIRED_TABLES.map((table) => ({ table_name: table })));
 
     const status = await ensureSchemaReady({});
@@ -65,6 +68,8 @@ describe('schema health checks', () => {
       .mockResolvedValueOnce([{ db: 'ai_3d_generator_v3' }])
       .mockResolvedValueOnce([{ table_name: 'tasks' }])
       .mockResolvedValueOnce([{ db: 'ai_3d_generator_v3' }])
+      .mockResolvedValueOnce(REQUIRED_TABLES.map((table) => ({ table_name: table })))
+      .mockResolvedValueOnce([{ db: 'ai_3d_generator_v3' }])
       .mockResolvedValueOnce(REQUIRED_TABLES.map((table) => ({ table_name: table })));
 
     const status = await ensureSchemaReady({});
@@ -77,6 +82,8 @@ describe('schema health checks', () => {
   it('runs V3 schema migrations on already initialized databases', async () => {
     mockQuery
       .mockResolvedValueOnce([{ db: 'ai_3d_generator_v3' }])
+      .mockResolvedValueOnce(REQUIRED_TABLES.map((table) => ({ table_name: table })))
+      .mockResolvedValueOnce([{ db: 'ai_3d_generator_v3' }])
       .mockResolvedValueOnce(REQUIRED_TABLES.map((table) => ({ table_name: table })));
 
     const status = await ensureSchemaReady({});
@@ -85,6 +92,23 @@ describe('schema health checks', () => {
     expect(mockGetConnection).toHaveBeenCalledTimes(1);
     expect(mockConnectionQuery.mock.calls.some((call) => String(call[0]).includes('CREATE TABLE IF NOT EXISTS schema_migrations'))).toBe(true);
     expect(mockConnectionQuery.mock.calls.some((call) => String(call[0]).includes('ALTER TABLE quota_user_usage'))).toBe(true);
+    expect(mockConnectionQuery.mock.calls.some((call) => String(call[0]).includes('INSERT INTO schema_migrations'))).toBe(true);
+  });
+
+  it('runs migrations when full schema init is disabled but base tables already exist', async () => {
+    const baseTables = ['tasks', 'credit_usage', 'system_config'];
+    mockQuery
+      .mockResolvedValueOnce([{ db: 'ai_3d_generator_v3' }])
+      .mockResolvedValueOnce(baseTables.map((table) => ({ table_name: table })))
+      .mockResolvedValueOnce([{ db: 'ai_3d_generator_v3' }])
+      .mockResolvedValueOnce(REQUIRED_TABLES.map((table) => ({ table_name: table })));
+
+    const status = await ensureSchemaReady({ AUTO_INIT_SCHEMA: 'false' });
+
+    expect(status.autoInitialized).toBe(true);
+    expect(status.missingTables).toEqual([]);
+    expect(mockGetConnection).toHaveBeenCalledTimes(1);
+    expect(mockConnectionQuery.mock.calls.some((call) => String(call[0]).includes('CREATE TABLE IF NOT EXISTS schema_migrations'))).toBe(true);
     expect(mockConnectionQuery.mock.calls.some((call) => String(call[0]).includes('INSERT INTO schema_migrations'))).toBe(true);
   });
 
@@ -115,7 +139,10 @@ describe('schema health checks', () => {
 
   it('allows auto init to be disabled explicitly', () => {
     expect(isAutoInitSchemaEnabled({ AUTO_INIT_SCHEMA: 'false' })).toBe(false);
-    expect(isAutoInitSchemaEnabled({ AUTO_MIGRATE: '0' })).toBe(false);
+    expect(isAutoInitSchemaEnabled({ AUTO_MIGRATE: '0' })).toBe(true);
     expect(isAutoInitSchemaEnabled({})).toBe(true);
+    expect(isAutoMigrateSchemaEnabled({ AUTO_INIT_SCHEMA: 'false' })).toBe(true);
+    expect(isAutoMigrateSchemaEnabled({ AUTO_MIGRATE: '0' })).toBe(false);
+    expect(isAutoMigrateSchemaEnabled({})).toBe(true);
   });
 });

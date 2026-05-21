@@ -12,6 +12,8 @@ export const REQUIRED_TABLES = [
   'quota_usage_ledger',
 ] as const;
 
+const BASE_REQUIRED_TABLES = ['tasks', 'credit_usage', 'system_config'] as const;
+
 export interface SchemaStatus {
   database: string | null;
   tableCount: number;
@@ -67,7 +69,11 @@ function isDisabled(value: string | undefined): boolean {
 }
 
 export function isAutoInitSchemaEnabled(env: NodeJS.ProcessEnv = process.env): boolean {
-  return !isDisabled(env.AUTO_INIT_SCHEMA ?? env.AUTO_MIGRATE);
+  return !isDisabled(env.AUTO_INIT_SCHEMA);
+}
+
+export function isAutoMigrateSchemaEnabled(env: NodeJS.ProcessEnv = process.env): boolean {
+  return !isDisabled(env.AUTO_MIGRATE);
 }
 
 export async function inspectSchema(autoInitialized = false): Promise<SchemaStatus> {
@@ -514,21 +520,30 @@ export async function runKnownSchemaMigrations(): Promise<number> {
 
 export async function ensureSchemaReady(env: NodeJS.ProcessEnv = process.env): Promise<SchemaStatus> {
   let status = await inspectSchema(false);
+  const baseMissingTables = status.missingTables.filter((table) =>
+    (BASE_REQUIRED_TABLES as readonly string[]).includes(table)
+  );
 
-  if (status.missingTables.length === 0 && !isAutoInitSchemaEnabled(env)) {
-    return status;
-  }
-
-  if (status.missingTables.length > 0 && isAutoInitSchemaEnabled(env)) {
+  if (baseMissingTables.length > 0 && isAutoInitSchemaEnabled(env)) {
     await runInitSchema();
     status = await inspectSchema(true);
   }
 
-  if (status.missingTables.length === 0) {
-    if (isAutoInitSchemaEnabled(env)) {
-      const appliedMigrations = await runKnownSchemaMigrations();
-      return appliedMigrations > 0 ? { ...status, autoInitialized: true } : status;
+  const remainingBaseMissingTables = status.missingTables.filter((table) =>
+    (BASE_REQUIRED_TABLES as readonly string[]).includes(table)
+  );
+  if (remainingBaseMissingTables.length > 0) {
+    throw new SchemaHealthError(status);
+  }
+
+  if (isAutoMigrateSchemaEnabled(env)) {
+    const appliedMigrations = await runKnownSchemaMigrations();
+    if (appliedMigrations > 0 || status.missingTables.length > 0) {
+      status = await inspectSchema(status.autoInitialized || appliedMigrations > 0);
     }
+  }
+
+  if (status.missingTables.length === 0) {
     return status;
   }
 
