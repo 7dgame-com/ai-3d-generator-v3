@@ -1,8 +1,10 @@
 import {
   REQUIRED_TABLES,
+  SCHEMA_MIGRATIONS,
   SchemaHealthError,
   ensureSchemaReady,
   isAutoInitSchemaEnabled,
+  runKnownSchemaMigrations,
   splitSqlStatements,
 } from '../db/schemaHealth';
 
@@ -47,16 +49,15 @@ describe('schema health checks', () => {
       .mockResolvedValueOnce([{ db: 'ai_3d_generator_v3' }])
       .mockResolvedValueOnce([])
       .mockResolvedValueOnce([{ db: 'ai_3d_generator_v3' }])
-      .mockResolvedValueOnce(REQUIRED_TABLES.map((table) => ({ table_name: table })))
-      .mockResolvedValueOnce([{ column_name: 'user_snapshot' }]);
+      .mockResolvedValueOnce(REQUIRED_TABLES.map((table) => ({ table_name: table })));
 
     const status = await ensureSchemaReady({});
 
     expect(status.autoInitialized).toBe(true);
     expect(status.missingTables).toEqual([]);
-    expect(mockGetConnection).toHaveBeenCalledTimes(1);
+    expect(mockGetConnection).toHaveBeenCalledTimes(2);
     expect(mockConnectionQuery).toHaveBeenCalled();
-    expect(mockRelease).toHaveBeenCalledTimes(1);
+    expect(mockRelease).toHaveBeenCalledTimes(2);
   });
 
   it('auto initializes missing tables in an existing plugin database', async () => {
@@ -64,28 +65,43 @@ describe('schema health checks', () => {
       .mockResolvedValueOnce([{ db: 'ai_3d_generator_v3' }])
       .mockResolvedValueOnce([{ table_name: 'tasks' }])
       .mockResolvedValueOnce([{ db: 'ai_3d_generator_v3' }])
-      .mockResolvedValueOnce(REQUIRED_TABLES.map((table) => ({ table_name: table })))
-      .mockResolvedValueOnce([{ column_name: 'user_snapshot' }]);
+      .mockResolvedValueOnce(REQUIRED_TABLES.map((table) => ({ table_name: table })));
 
     const status = await ensureSchemaReady({});
 
     expect(status.autoInitialized).toBe(true);
     expect(status.missingTables).toEqual([]);
-    expect(mockGetConnection).toHaveBeenCalledTimes(1);
+    expect(mockGetConnection).toHaveBeenCalledTimes(2);
   });
 
-  it('adds the quota user snapshot column to already initialized databases', async () => {
+  it('runs V3 schema migrations on already initialized databases', async () => {
     mockQuery
       .mockResolvedValueOnce([{ db: 'ai_3d_generator_v3' }])
-      .mockResolvedValueOnce(REQUIRED_TABLES.map((table) => ({ table_name: table })))
-      .mockResolvedValueOnce([])
-      .mockResolvedValueOnce({ affectedRows: 1 });
+      .mockResolvedValueOnce(REQUIRED_TABLES.map((table) => ({ table_name: table })));
 
     const status = await ensureSchemaReady({});
 
     expect(status.autoInitialized).toBe(true);
-    expect(String(mockQuery.mock.calls[2][0])).toContain('information_schema.COLUMNS');
-    expect(String(mockQuery.mock.calls[3][0])).toContain('ALTER TABLE quota_user_usage');
+    expect(mockGetConnection).toHaveBeenCalledTimes(1);
+    expect(mockConnectionQuery.mock.calls.some((call) => String(call[0]).includes('CREATE TABLE IF NOT EXISTS schema_migrations'))).toBe(true);
+    expect(mockConnectionQuery.mock.calls.some((call) => String(call[0]).includes('ALTER TABLE quota_user_usage'))).toBe(true);
+    expect(mockConnectionQuery.mock.calls.some((call) => String(call[0]).includes('INSERT INTO schema_migrations'))).toBe(true);
+  });
+
+  it('skips recorded migrations during startup migration checks', async () => {
+    mockConnectionQuery.mockImplementation((sql: string) => {
+      if (sql.includes('SELECT id FROM schema_migrations')) {
+        return Promise.resolve([{ id: 'already-applied' }]);
+      }
+      return Promise.resolve([]);
+    });
+
+    const appliedCount = await runKnownSchemaMigrations();
+
+    expect(appliedCount).toBe(0);
+    expect(mockConnectionQuery.mock.calls.some((call) => String(call[0]).includes('CREATE TABLE IF NOT EXISTS schema_migrations'))).toBe(true);
+    expect(mockConnectionQuery.mock.calls.some((call) => String(call[0]).includes('ALTER TABLE tasks'))).toBe(false);
+    expect(SCHEMA_MIGRATIONS.length).toBeGreaterThan(0);
   });
 
   it('fails partial schemas when auto init is disabled', async () => {

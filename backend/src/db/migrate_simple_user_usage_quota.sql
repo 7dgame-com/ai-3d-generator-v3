@@ -3,6 +3,11 @@
 
 START TRANSACTION;
 
+CREATE TABLE IF NOT EXISTS schema_migrations (
+  id         VARCHAR(128) NOT NULL PRIMARY KEY,
+  applied_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
 CREATE TABLE IF NOT EXISTS quota_user_usage (
   user_id     INT UNSIGNED NOT NULL PRIMARY KEY,
   used_power  DECIMAL(12,2) NOT NULL DEFAULT 0.00,
@@ -59,5 +64,9 @@ DROP TABLE IF EXISTS power_accounts;
 DROP TABLE IF EXISTS quota_jobs;
 DROP TABLE IF EXISTS credit_ledger;
 DROP TABLE IF EXISTS user_accounts;
+
+INSERT INTO schema_migrations (id)
+VALUES ('20260521_simple_user_usage_quota')
+ON DUPLICATE KEY UPDATE applied_at = applied_at;
 
 COMMIT;
