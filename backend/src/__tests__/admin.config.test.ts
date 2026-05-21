@@ -92,4 +92,21 @@ describe('admin controller config persistence', () => {
       message: '参数错误',
     });
   });
+
+  it('returns an actionable server config error when encryption is not configured', async () => {
+    const app = createApp();
+    mockEncrypt.mockImplementation(() => {
+      throw new Error('CRYPTO_KEY environment variable is not set');
+    });
+
+    const response = await request(app)
+      .put('/admin/config')
+      .send({ provider_id: 'tripo3d', apiKey: 'valid-tripo-key' });
+
+    expect(response.status).toBe(503);
+    expect(response.body).toMatchObject({
+      code: 'SERVER_CONFIG_INVALID',
+      message: 'CRYPTO_KEY environment variable is not set',
+    });
+  });
 });

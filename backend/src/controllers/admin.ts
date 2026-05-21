@@ -15,8 +15,25 @@ import { encrypt, decrypt } from '../services/crypto';
 import { providerRegistry } from '../adapters/ProviderRegistry';
 import { normalizeTaskBilling } from '../utils/taskBilling';
 import { probeRegion, TripoRegion } from '../services/regionProbe';
+import { isRuntimeConfigError } from '../config/runtime';
 
 export const adminRouter = Router();
+
+function sendRuntimeConfigError(res: Response, err: unknown): boolean {
+  const message = err instanceof Error ? err.message : String(err);
+  if (
+    isRuntimeConfigError(err)
+    || message.includes('CRYPTO_KEY')
+    || message.includes('PREPARE_TOKEN_SECRET')
+  ) {
+    res.status(503).json({
+      code: 'SERVER_CONFIG_INVALID',
+      message,
+    });
+    return true;
+  }
+  return false;
+}
 
 function resolveAdminProviderId(rawProviderId: unknown): string | null {
   const providerId = typeof rawProviderId === 'string' && rawProviderId.length > 0
@@ -143,6 +160,9 @@ adminRouter.put('/config', async (req: Request, res: Response): Promise<void> =>
       );
       res.json({ success: true, region });
     } catch (err) {
+      if (sendRuntimeConfigError(res, err)) {
+        return;
+      }
       console.error('[AdminController] PUT /config error:', err);
       res.status(500).json({ code: 5001, message: '服务器内部错误' });
     }
@@ -160,6 +180,9 @@ adminRouter.put('/config', async (req: Request, res: Response): Promise<void> =>
     );
     res.json({ success: true });
   } catch (err) {
+    if (sendRuntimeConfigError(res, err)) {
+      return;
+    }
     console.error('[AdminController] PUT /config error:', err);
     res.status(500).json({ code: 5001, message: '服务器内部错误' });
   }

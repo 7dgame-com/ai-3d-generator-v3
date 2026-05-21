@@ -31,6 +31,7 @@ COPY package.json package-lock.json* ./
 RUN npm install --production
 
 COPY --from=builder /app/dist ./dist
+COPY --from=builder /app/src/db/*.sql ./dist/db/
 
 EXPOSE 8089
 

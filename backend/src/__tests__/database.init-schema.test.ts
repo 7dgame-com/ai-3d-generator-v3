@@ -4,6 +4,7 @@ import path from 'node:path';
 describe('driver ai-3d-generator-v3 init schema', () => {
   const pluginSchemaPath = path.resolve(__dirname, '..', 'db', 'schema.sql');
   const repoInitSchemaPath = path.resolve(__dirname, '..', 'db', 'init-schema.sql');
+  const dockerfilePath = path.resolve(__dirname, '..', '..', 'Dockerfile');
   const driverInitSchemaPath = path.resolve(
     __dirname,
     '..',
@@ -44,5 +45,11 @@ describe('driver ai-3d-generator-v3 init schema', () => {
     expect(initSchema).toContain("CREATE DATABASE IF NOT EXISTS `ai_3d_generator_v3`");
     expect(initSchema).toContain("USE `ai_3d_generator_v3`;");
     expect(initSchema).toContain(pluginSchema);
+  });
+
+  it('copies SQL files into the production backend image for runtime bootstrap', () => {
+    const dockerfile = fs.readFileSync(dockerfilePath, 'utf8');
+
+    expect(dockerfile).toContain('COPY --from=builder /app/src/db/*.sql ./dist/db/');
   });
 });
