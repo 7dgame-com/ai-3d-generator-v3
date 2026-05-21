@@ -1,11 +1,11 @@
 import { Request, Response } from 'express';
-import { pool, query } from '../db/connection';
+import { query } from '../db/connection';
 import { creditToPower, getEstimatedCreditCost } from '../config/providers';
 import { decrypt } from '../services/crypto';
 import { AuthenticatedRequest } from '../middleware/auth';
-import { computeThrottleDelay, sleep } from '../services/creditManager';
-import { type DeductResult } from '../services/powerManager';
-import { sitePowerManager } from '../services/sitePowerManager';
+import { activeQuotaTool } from '../services/quotaToolRegistry';
+import { type QuotaReserveResult } from '../services/quotaTool';
+import { buildQuotaUserSnapshot } from '../services/quotaUserSnapshot';
 import { providerRegistry } from '../adapters/ProviderRegistry';
 import { addTaskToPoller } from '../services/taskPoller';
 import {
@@ -17,17 +17,9 @@ import { computeExpiresAt } from '../utils/urlExpiry';
 import { getProviderDefaultCreditCost } from '../utils/taskBilling';
 import { getTripoRegion } from '../services/tripoRegion';
 
-const DEFAULT_MAX_THROTTLE_DELAY_MS = 30000;
 const HYPER3D_API_PROXY_BASE = '/hyper';
 const TRIPO_MODEL_VERSION = process.env.TRIPO_MODEL_VERSION || 'P1-20260311';
 const DIRECT_PROVIDER_STATUS_KEY_PREFIX = 'direct:';
-
-interface AccountSnapshot {
-  wallet_balance: string;
-  pool_balance: string;
-  pool_baseline: string;
-  next_cycle_at: Date | null;
-}
 
 interface TaskOwnershipRow {
   task_id: string;
@@ -75,43 +67,12 @@ async function getApiKey(providerId: string): Promise<string> {
   return decrypt(rows[0].value);
 }
 
-async function getMaxThrottleDelayMs(): Promise<number> {
-  const rows = await query<Array<{ value: string }>>(
-    'SELECT `value` FROM system_config WHERE `key` = ? LIMIT 1',
-    ['max_delay_ms']
-  );
-  const parsed = Number(rows?.[0]?.value ?? DEFAULT_MAX_THROTTLE_DELAY_MS);
-  return Number.isFinite(parsed) && parsed >= 0 ? parsed : DEFAULT_MAX_THROTTLE_DELAY_MS;
-}
-
 async function getApiMode(): Promise<'direct' | 'proxy'> {
   const rows = await query<Array<{ value: string }>>(
     'SELECT `value` FROM system_config WHERE `key` = ? LIMIT 1',
     ['api_mode']
   );
   return rows?.[0]?.value === 'proxy' ? 'proxy' : 'direct';
-}
-
-async function getLockedSiteAccountSnapshot(): Promise<AccountSnapshot | null> {
-  const conn = await pool.getConnection();
-
-  try {
-    await conn.beginTransaction();
-    const [rows] = await conn.query<any[]>(
-      `SELECT wallet_balance, pool_balance, pool_baseline, next_cycle_at
-       FROM site_power_accounts
-       WHERE id = 1
-       FOR UPDATE`,
-      []
-    );
-    await conn.commit();
-    return rows?.[0] ?? null;
-  } catch (error) {
-    await conn.rollback();
-    throw error;
-  } finally {
-    conn.release();
-  }
 }
 
 async function getTaskOwnershipRow(taskId: string): Promise<TaskOwnershipRow | null> {
@@ -264,57 +225,20 @@ export async function prepareTask(req: Request, res: Response): Promise<void> {
     return;
   }
 
-  let accountSnapshot: AccountSnapshot | null;
-  try {
-    accountSnapshot = await getLockedSiteAccountSnapshot();
-  } catch (error) {
-    console.error('[DirectTaskController] 读取额度账户失败:', error);
-    res.status(500).json({ code: 5001, message: '服务器内部错误' });
-    return;
-  }
-
-  if (!accountSnapshot) {
-    res.status(422).json({ code: 'INSUFFICIENT_CREDITS', message: '额度不足' });
-    return;
-  }
-
-  const poolCurrent = Number(accountSnapshot.pool_balance);
-  const poolBaseline = Number(accountSnapshot.pool_baseline);
-  const totalBalance = Number(accountSnapshot.wallet_balance) + poolCurrent;
-  const maxThrottleDelayMs = await getMaxThrottleDelayMs();
-  const delayMs = computeThrottleDelay(poolCurrent, poolBaseline, maxThrottleDelayMs);
-
-  if (delayMs === -1) {
-    const nextCycleAt = accountSnapshot.next_cycle_at;
-    const suggestedWaitSeconds = nextCycleAt
-      ? Math.max(0, Math.floor((nextCycleAt.getTime() - Date.now()) / 1000))
-      : 3600;
-
-    res.status(429).json({
-      code: 'POOL_EXHAUSTED',
-      message: '池塘额度已耗尽',
-      data: { provider_id: providerId, poolCurrent, poolBaseline, nextCycleAt, suggestedWaitSeconds },
-    });
-    return;
-  }
-
   const estimatedCreditCost = getEstimatedCreditCost(providerId);
   const estimatedPower = creditToPower(providerId, estimatedCreditCost);
 
-  if (totalBalance < estimatedPower) {
-    res.status(422).json({ code: 'INSUFFICIENT_CREDITS', message: '额度不足' });
-    return;
-  }
-
-  if (delayMs > 0) {
-    await sleep(delayMs);
-  }
-
   const tempTaskId = `temp:${userId}:${Date.now()}`;
 
-  let preDeductResult: DeductResult;
+  let preDeductResult: QuotaReserveResult;
   try {
-    preDeductResult = await sitePowerManager.preDeduct(providerId, estimatedPower, tempTaskId);
+    preDeductResult = await activeQuotaTool.reserve(
+      userId,
+      providerId,
+      estimatedPower,
+      tempTaskId,
+      buildQuotaUserSnapshot((req as AuthenticatedRequest).user)
+    );
   } catch (error) {
     console.error('[DirectTaskController] 预扣额度失败:', error);
     res.status(500).json({ code: 5001, message: '服务器内部错误' });
@@ -391,8 +315,8 @@ export async function registerTask(req: Request, res: Response): Promise<void> {
     );
 
     const updateResult = await query<{ affectedRows?: number }>(
-      "UPDATE site_power_ledger SET task_id = ? WHERE task_id = ? AND provider_id = ? AND event_type = 'pre_deduct'",
-      [taskId, tokenPayload.tempTaskId, tokenPayload.providerId]
+      "UPDATE quota_usage_ledger SET task_id = ? WHERE user_id = ? AND task_id = ? AND provider_id = ? AND event_type = 'pre_deduct'",
+      [taskId, userId, tokenPayload.tempTaskId, tokenPayload.providerId]
     );
 
     if ((updateResult as { affectedRows?: number })?.affectedRows === 0) {
@@ -465,7 +389,8 @@ export async function completeTask(req: Request, res: Response): Promise<void> {
     const completedAt = new Date();
     const resolvedBilling = await resolveCompletionBilling(task, outputUrl, thumbnailUrl);
     const powerCost = creditToPower(task.provider_id, resolvedBilling.creditCost);
-    const result = await sitePowerManager.finalizeTaskSuccess(
+    const result = await activeQuotaTool.finalizeTaskSuccess(
+      userId,
       task.provider_id,
       taskId,
       resolvedBilling.outputUrl,
@@ -534,7 +459,7 @@ export async function failTask(req: Request, res: Response): Promise<void> {
   }
 
   try {
-    await sitePowerManager.refund(task.provider_id, taskId);
+    await activeQuotaTool.refund(userId, task.provider_id, taskId);
     await query(
       "UPDATE tasks SET status = 'failed', error_message = ?, completed_at = NOW() WHERE task_id = ?",
       [errorMessage ?? '任务生成失败', taskId]

@@ -19,6 +19,44 @@ import { isRuntimeConfigError } from '../config/runtime';
 
 export const adminRouter = Router();
 
+type UsageUserSnapshot = {
+  username?: string;
+  nickname?: string | null;
+  email?: string | null;
+};
+
+function normalizeSnapshotText(value: unknown): string | null {
+  return typeof value === 'string' && value.trim().length > 0 ? value.trim() : null;
+}
+
+function parseUsageUserSnapshot(value: unknown): UsageUserSnapshot | null {
+  if (!value) {
+    return null;
+  }
+  if (typeof value === 'object') {
+    return value as UsageUserSnapshot;
+  }
+  if (typeof value !== 'string') {
+    return null;
+  }
+  try {
+    const parsed = JSON.parse(value);
+    return parsed && typeof parsed === 'object' ? parsed as UsageUserSnapshot : null;
+  } catch {
+    return null;
+  }
+}
+
+function resolveUsageUsername(userId: number, snapshotValue: unknown): string {
+  const snapshot = parseUsageUserSnapshot(snapshotValue);
+  return (
+    normalizeSnapshotText(snapshot?.nickname)
+    ?? normalizeSnapshotText(snapshot?.username)
+    ?? normalizeSnapshotText(snapshot?.email)
+    ?? `User ${userId}`
+  );
+}
+
 function sendRuntimeConfigError(res: Response, err: unknown): boolean {
   const message = err instanceof Error ? err.message : String(err);
   if (
@@ -275,16 +313,30 @@ adminRouter.get('/usage', async (_req: Request, res: Response): Promise<void> =>
   try {
     const enabledProviderIds = new Set(providerRegistry.getEnabledIds());
     const successRows = await query<
-      Array<{ user_id: number; provider_id: string; credit_cost: number; power_cost: number; created_at: string }>
+      Array<{
+        user_id: number;
+        provider_id: string;
+        credit_cost: number;
+        power_cost: number;
+        created_at: string;
+        user_snapshot: unknown;
+      }>
     >(
-      `SELECT user_id, provider_id, credit_cost, power_cost, created_at
-       FROM tasks
-       WHERE status = 'success'`
+      `SELECT
+         t.user_id,
+         t.provider_id,
+         t.credit_cost,
+         t.power_cost,
+         t.created_at,
+         q.user_snapshot
+       FROM tasks t
+       LEFT JOIN quota_user_usage q ON q.user_id = t.user_id
+       WHERE t.status = 'success'`
     );
 
     let totalCredits = 0;
     let totalPower = 0;
-    const rankingMap = new Map<number, { credits: number; power: number }>();
+    const rankingMap = new Map<number, { credits: number; power: number; username: string }>();
     const dailyTrendMap = new Map<string, { credits: number; power: number }>();
 
     for (const row of successRows) {
@@ -301,9 +353,16 @@ adminRouter.get('/usage', async (_req: Request, res: Response): Promise<void> =>
       totalCredits += billing.creditCost;
       totalPower += billing.powerCost;
 
-      const ranking = rankingMap.get(row.user_id) ?? { credits: 0, power: 0 };
+      const ranking = rankingMap.get(row.user_id) ?? {
+        credits: 0,
+        power: 0,
+        username: resolveUsageUsername(row.user_id, row.user_snapshot),
+      };
       ranking.credits += billing.creditCost;
       ranking.power += billing.powerCost;
+      if (ranking.username === `User ${row.user_id}` && row.user_snapshot) {
+        ranking.username = resolveUsageUsername(row.user_id, row.user_snapshot);
+      }
       rankingMap.set(row.user_id, ranking);
 
       const dateKey = new Date(row.created_at).toISOString().slice(0, 10);
@@ -319,7 +378,7 @@ adminRouter.get('/usage', async (_req: Request, res: Response): Promise<void> =>
       userRanking: Array.from(rankingMap.entries())
         .map(([userId, values]) => ({
           userId,
-          username: `User ${userId}`,
+          username: values.username,
           credits: Math.round(values.credits * 100) / 100,
           power: Math.round(values.power * 100) / 100,
         }))

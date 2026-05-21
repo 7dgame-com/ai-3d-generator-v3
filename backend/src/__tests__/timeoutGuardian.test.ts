@@ -14,8 +14,8 @@ jest.mock('../db/connection', () => ({
   query: (...args: unknown[]) => mockQuery(...args),
 }));
 
-jest.mock('../services/sitePowerManager', () => ({
-  sitePowerManager: {
+jest.mock('../services/quotaToolRegistry', () => ({
+  activeQuotaTool: {
     refund: (...args: unknown[]) => mockRefund(...args),
   },
 }));
@@ -40,8 +40,8 @@ describe('timeoutGuardian service', () => {
 
   it('refunds timed-out pre-deduct entries and marks tasks as timeout', async () => {
     mockQuery.mockResolvedValueOnce([
-      { provider_id: 'tripo3d', task_id: 'task-001' },
-      { provider_id: 'hyper3d', task_id: 'task-002' },
+      { user_id: 7, provider_id: 'tripo3d', task_id: 'task-001' },
+      { user_id: 8, provider_id: 'hyper3d', task_id: 'task-002' },
     ]);
     mockQuery.mockResolvedValueOnce({ affectedRows: 1 });
     mockQuery.mockResolvedValueOnce({ affectedRows: 1 });
@@ -51,11 +51,11 @@ describe('timeoutGuardian service', () => {
 
     expect(mockQuery).toHaveBeenNthCalledWith(
       1,
-      expect.stringContaining('FROM site_power_ledger'),
+      expect.stringContaining('FROM quota_usage_ledger'),
       [Math.floor(PREPARE_TIMEOUT_MS / 1000)]
     );
-    expect(mockRefund).toHaveBeenNthCalledWith(1, 'tripo3d', 'task-001');
-    expect(mockRefund).toHaveBeenNthCalledWith(2, 'hyper3d', 'task-002');
+    expect(mockRefund).toHaveBeenNthCalledWith(1, 7, 'tripo3d', 'task-001');
+    expect(mockRefund).toHaveBeenNthCalledWith(2, 8, 'hyper3d', 'task-002');
     expect(mockQuery).toHaveBeenNthCalledWith(
       2,
       expect.stringContaining("UPDATE tasks SET status = 'timeout'"),
@@ -80,8 +80,8 @@ describe('timeoutGuardian service', () => {
 
   it('continues processing even if one refund operation fails', async () => {
     mockQuery.mockResolvedValueOnce([
-      { provider_id: 'tripo3d', task_id: 'task-001' },
-      { provider_id: 'tripo3d', task_id: 'task-002' },
+      { user_id: 7, provider_id: 'tripo3d', task_id: 'task-001' },
+      { user_id: 7, provider_id: 'tripo3d', task_id: 'task-002' },
     ]);
     mockQuery.mockResolvedValueOnce({ affectedRows: 1 });
     mockRefund

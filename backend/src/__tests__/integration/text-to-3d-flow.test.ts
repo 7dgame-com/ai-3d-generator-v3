@@ -53,16 +53,14 @@ jest.mock('../../services/crypto', () => ({
   decrypt: jest.fn((v: string) => v.replace('encrypted:', '')),
 }));
 
-const mockPreDeduct = jest.fn();
-const mockComputeThrottleDelay = jest.fn();
-const mockSleep = jest.fn();
+const mockReserve = jest.fn();
+const mockRefund = jest.fn();
 
-jest.mock('../../services/creditManager', () => ({
-  creditManager: {
-    preDeduct: mockPreDeduct,
+jest.mock('../../services/quotaToolRegistry', () => ({
+  activeQuotaTool: {
+    reserve: (...args: unknown[]) => mockReserve(...args),
+    refund: (...args: unknown[]) => mockRefund(...args),
   },
-  computeThrottleDelay: mockComputeThrottleDelay,
-  sleep: mockSleep,
 }));
 
 const mockCreateTask = jest.fn();
@@ -162,9 +160,8 @@ describe('Integration: complete text-to-3D generation flow', () => {
         next_cycle_at: null,
       },
     ]]);
-    mockPreDeduct.mockResolvedValue({ success: true });
-    mockComputeThrottleDelay.mockReturnValue(0);
-    mockSleep.mockResolvedValue(undefined);
+    mockReserve.mockResolvedValue({ success: true, usedPowerAfter: 1, remainingPower: 99 });
+    mockRefund.mockResolvedValue(undefined);
     (providerRegistry.isEnabled as jest.Mock).mockImplementation((providerId: string) => providerId === 'tripo3d');
     (providerRegistry.getEnabledIds as jest.Mock).mockReturnValue(['tripo3d']);
     (providerRegistry.get as jest.Mock).mockImplementation(() => ({

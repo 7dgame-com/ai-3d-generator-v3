@@ -112,39 +112,32 @@ describe('frontend api module', () => {
     )
   })
 
-  it('loads the shared site power status from the site admin endpoint', async () => {
-    mockBackendGet.mockResolvedValue({ data: { data: { wallet_balance: 0, pool_balance: 0 } } })
-
-    const { getSitePowerStatus } = await import('../index')
-
-    await getSitePowerStatus()
-
-    expect(mockBackendGet).toHaveBeenCalledWith('/admin/site-power-status')
-  })
-
-  it('posts site recharge payloads to the site admin endpoint', async () => {
-    mockBackendPost.mockResolvedValue({ data: { success: true } })
-
-    const { rechargeSitePower } = await import('../index')
-
-    await rechargeSitePower({
-      total_power: 1200,
-      wallet_percent: 40,
-      pool_percent: 60,
-      wallet_amount: 480,
-      pool_amount: 720,
-      total_duration: 10080,
-      cycle_duration: 1440,
+  it('loads the active quota tool summary from the admin endpoint', async () => {
+    mockBackendGet.mockResolvedValue({
+      data: { data: { tool: 'simple-user-usage-quota', quota_limit: 100, used_user_count: 2 } },
     })
 
-    expect(mockBackendPost).toHaveBeenCalledWith('/admin/site-power-recharge', {
-      total_power: 1200,
-      wallet_percent: 40,
-      pool_percent: 60,
-      wallet_amount: 480,
-      pool_amount: 720,
-      total_duration: 10080,
-      cycle_duration: 1440,
+    const { getQuotaSummary } = await import('../index')
+
+    await getQuotaSummary()
+
+    expect(mockBackendGet).toHaveBeenCalledWith('/admin/quota/summary')
+  })
+
+  it('updates the global default quota limit through the admin endpoint', async () => {
+    mockBackendPost.mockResolvedValue({ data: { success: true } })
+    mockBackendPut.mockResolvedValue({ data: { success: true } })
+
+    const { updateDefaultQuotaLimit, resetQuotaUsage, getUserQuotas } = await import('../index')
+
+    await updateDefaultQuotaLimit(1200)
+    await resetQuotaUsage()
+    await getUserQuotas({ search: 'alice', page: 2, pageSize: 10 })
+
+    expect(mockBackendPut).toHaveBeenCalledWith('/admin/quota/default-limit', { quota_limit: 1200 })
+    expect(mockBackendPost).toHaveBeenCalledWith('/admin/quota/reset-usage', {})
+    expect(mockBackendGet).toHaveBeenCalledWith('/admin/user-quotas', {
+      params: { search: 'alice', page: 2, pageSize: 10 },
     })
   })
 

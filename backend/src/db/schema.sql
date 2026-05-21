@@ -1,7 +1,7 @@
 -- AI 3D Generator V3 Plugin Database Schema
 -- Database: ai_3d_generator_v3
 
-CREATE TABLE tasks (
+CREATE TABLE IF NOT EXISTS tasks (
   id            INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
   task_id       VARCHAR(64) NOT NULL UNIQUE COMMENT 'Tripo3D 任务 ID',
   user_id       INT UNSIGNED NOT NULL COMMENT '主系统用户 ID',
@@ -28,7 +28,7 @@ CREATE TABLE tasks (
   INDEX idx_expires_at (expires_at)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
-CREATE TABLE credit_usage (
+CREATE TABLE IF NOT EXISTS credit_usage (
   id           INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
   user_id      INT UNSIGNED NOT NULL,
   task_id      VARCHAR(64) NOT NULL COMMENT 'Provider 任务 ID',
@@ -38,190 +38,43 @@ CREATE TABLE credit_usage (
   INDEX idx_created_at (created_at)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
-CREATE TABLE system_config (
+CREATE TABLE IF NOT EXISTS system_config (
   `key`       VARCHAR(64) NOT NULL PRIMARY KEY,
   `value`     TEXT NOT NULL COMMENT 'AES-256-GCM 加密存储',
   updated_at  DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
--- Credit Quota Management Tables
+INSERT INTO system_config (`key`, `value`)
+VALUES ('quota.default_limit_power', '0')
+ON DUPLICATE KEY UPDATE `value` = `value`;
 
-CREATE TABLE user_accounts (
-  id               INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
-  user_id          INT UNSIGNED NOT NULL COMMENT '主系统用户 ID',
-  provider_id      VARCHAR(32)  NOT NULL COMMENT '服务提供商标识符，如 tripo3d、hyper3d',
+-- Simple per-user usage quota tool
 
-  wallet_balance             DECIMAL(12,2) NOT NULL DEFAULT 0.00 COMMENT 'Wallet 余额',
-  pool_balance               DECIMAL(12,2) NOT NULL DEFAULT 0.00 COMMENT 'Pool 余额',
+CREATE TABLE IF NOT EXISTS quota_user_usage (
+  user_id     INT UNSIGNED NOT NULL PRIMARY KEY COMMENT '主系统用户 ID',
+  used_power  DECIMAL(12,2) NOT NULL DEFAULT 0.00 COMMENT '累计已使用 power',
+  user_snapshot JSON NULL COMMENT '使用时记录的主系统用户快照',
+  created_at  DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at  DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
 
-  pool_baseline              DECIMAL(12,2) NOT NULL DEFAULT 0.00 COMMENT '充值时的 pool_amount，节流基准线',
-  wallet_injection_per_cycle DECIMAL(12,2) NOT NULL DEFAULT 0.00 COMMENT '每周期注入额度 = wallet_amount × cycle_duration / total_duration',
-  cycles_remaining           INT UNSIGNED  NOT NULL DEFAULT 0   COMMENT '剩余周期数，每次注入后递减，归零后停止注入',
-  cycle_duration             INT UNSIGNED  NOT NULL DEFAULT 1440 COMMENT '周期时长（分钟）',
-  total_duration             INT UNSIGNED  NOT NULL DEFAULT 1440 COMMENT '总使用时长（分钟）',
-
-  cycle_started_at DATETIME     COMMENT '当前周期开始时间',
-  next_cycle_at    DATETIME     COMMENT '下一个周期开始时间',
-
-  created_at       DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-  updated_at       DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-
-  UNIQUE KEY uk_user_provider (user_id, provider_id),
-  INDEX idx_next_cycle (next_cycle_at),
-  INDEX idx_provider (provider_id)
+  INDEX idx_quota_user_usage_updated_at (updated_at)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
-CREATE TABLE credit_ledger (
-  id          INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
-  user_id     INT UNSIGNED NOT NULL,
-  provider_id VARCHAR(32)  NOT NULL DEFAULT 'tripo3d' COMMENT '服务提供商标识符',
-  event_type  ENUM(
-    'recharge',
-    'inject',
-    'settle',
-    'pre_deduct',
-    'refund',
-    'confirm_deduct'
-  ) NOT NULL,
-  wallet_delta    DECIMAL(12,2) NOT NULL DEFAULT 0.00,
-  pool_delta      DECIMAL(12,2) NOT NULL DEFAULT 0.00,
-  task_id         VARCHAR(64)   COMMENT '关联任务 ID（pre_deduct/refund/confirm_deduct 时填写）',
-  idempotency_key VARCHAR(128)  COMMENT '幂等键（inject/settle 时填写）',
-  note            VARCHAR(256),
-  created_at      DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-
-  INDEX idx_user_id (user_id),
-  INDEX idx_task_id (task_id),
-  UNIQUE KEY uk_idempotency (idempotency_key),
-  INDEX idx_created_at (created_at),
-  INDEX idx_provider_user (provider_id, user_id)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
-
-CREATE TABLE quota_jobs (
-  id            INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
-  user_id       INT UNSIGNED NOT NULL,
-  provider_id   VARCHAR(32)  NOT NULL DEFAULT 'tripo3d' COMMENT '服务提供商标识符',
-  job_type      ENUM('inject', 'settle') NOT NULL,
-  cycle_key     VARCHAR(64) NOT NULL COMMENT '{provider_id}:{user_id}:{cycle_start_at}，幂等键',
-  status        ENUM('pending', 'done', 'failed') NOT NULL DEFAULT 'pending',
-  executed_at   DATETIME,
-  error_message VARCHAR(256),
-  created_at    DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-
-  UNIQUE KEY uk_cycle_key (cycle_key),
-  INDEX idx_user_status (user_id, status),
-  INDEX idx_provider_user_status (provider_id, user_id, status)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
-
--- Global Power Account Tables
-
-CREATE TABLE power_accounts (
-  user_id                     INT UNSIGNED NOT NULL PRIMARY KEY COMMENT '主系统用户 ID',
-  wallet_balance              DECIMAL(12,2) NOT NULL DEFAULT 0.00 COMMENT 'Wallet 余额',
-  pool_balance                DECIMAL(12,2) NOT NULL DEFAULT 0.00 COMMENT 'Pool 余额',
-  pool_baseline               DECIMAL(12,2) NOT NULL DEFAULT 0.00 COMMENT '充值时的 pool_amount，节流基准线',
-  wallet_injection_per_cycle  DECIMAL(12,2) NOT NULL DEFAULT 0.00 COMMENT '每周期注入额度',
-  cycles_remaining            INT UNSIGNED NOT NULL DEFAULT 0 COMMENT '剩余周期数',
-  cycle_duration              INT UNSIGNED NOT NULL DEFAULT 1440 COMMENT '周期时长（分钟）',
-  total_duration              INT UNSIGNED NOT NULL DEFAULT 1440 COMMENT '总使用时长（分钟）',
-  cycle_started_at            DATETIME COMMENT '当前周期开始时间',
-  next_cycle_at               DATETIME COMMENT '下一个周期开始时间',
-  created_at                  DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-  updated_at                  DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-
-  INDEX idx_power_accounts_next_cycle (next_cycle_at)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
-
-CREATE TABLE power_ledger (
+CREATE TABLE IF NOT EXISTS quota_usage_ledger (
   id                   INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
   user_id              INT UNSIGNED NOT NULL COMMENT '主系统用户 ID',
-  event_type           ENUM(
-    'recharge',
-    'inject',
-    'settle',
-    'pre_deduct',
-    'refund',
-    'confirm_deduct'
-  ) NOT NULL,
-  wallet_delta         DECIMAL(12,2) NOT NULL DEFAULT 0.00,
-  pool_delta           DECIMAL(12,2) NOT NULL DEFAULT 0.00,
+  event_type           ENUM('pre_deduct', 'refund', 'confirm_deduct', 'admin_reset') NOT NULL,
+  power_delta          DECIMAL(12,2) NOT NULL DEFAULT 0.00 COMMENT '本次对 used_power 的增减',
+  used_power_after     DECIMAL(12,2) NOT NULL DEFAULT 0.00 COMMENT '事件后的累计已用 power',
   task_id              VARCHAR(64) COMMENT '关联任务 ID',
-  provider_id          VARCHAR(32) COMMENT '关联 provider_id，仅任务结算场景写入',
+  provider_id          VARCHAR(32) COMMENT '关联 provider_id',
   provider_credit_cost DECIMAL(12,2) NOT NULL DEFAULT 0.00 COMMENT 'Provider 原始 credits 消耗',
   power_cost           DECIMAL(12,2) NOT NULL DEFAULT 0.00 COMMENT '内部统一 power 消耗',
-  idempotency_key      VARCHAR(128) COMMENT '幂等键（inject/settle 时填写）',
   note                 VARCHAR(256),
   created_at           DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
 
-  INDEX idx_power_ledger_user_id (user_id),
-  INDEX idx_power_ledger_task_id (task_id),
-  INDEX idx_power_ledger_provider_user (provider_id, user_id),
-  UNIQUE KEY uk_power_ledger_idempotency (idempotency_key)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
-
-CREATE TABLE power_jobs (
-  id            INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
-  user_id       INT UNSIGNED NOT NULL COMMENT '主系统用户 ID',
-  job_type      ENUM('inject', 'settle') NOT NULL,
-  cycle_key     VARCHAR(96) NOT NULL COMMENT '{user_id}:{cycle_start_at}，幂等键',
-  status        ENUM('pending', 'done', 'failed') NOT NULL DEFAULT 'pending',
-  executed_at   DATETIME,
-  error_message VARCHAR(256),
-  created_at    DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-
-  UNIQUE KEY uk_power_jobs_cycle_key (cycle_key),
-  INDEX idx_power_jobs_user_status (user_id, status)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
-
-CREATE TABLE site_power_accounts (
-  id                         TINYINT UNSIGNED NOT NULL PRIMARY KEY COMMENT '站点共享账户固定主键',
-  wallet_balance             DECIMAL(12,2) NOT NULL DEFAULT 0.00 COMMENT 'Wallet 余额',
-  pool_balance               DECIMAL(12,2) NOT NULL DEFAULT 0.00 COMMENT 'Pool 余额',
-  pool_baseline              DECIMAL(12,2) NOT NULL DEFAULT 0.00 COMMENT '充值时的 pool_amount，节流基准线',
-  wallet_injection_per_cycle DECIMAL(12,2) NOT NULL DEFAULT 0.00 COMMENT '每周期注入额度',
-  cycles_remaining           INT UNSIGNED NOT NULL DEFAULT 0 COMMENT '剩余周期数',
-  cycle_duration             INT UNSIGNED NOT NULL DEFAULT 1440 COMMENT '周期时长（分钟）',
-  total_duration             INT UNSIGNED NOT NULL DEFAULT 1440 COMMENT '总使用时长（分钟）',
-  cycle_started_at           DATETIME COMMENT '当前周期开始时间',
-  next_cycle_at              DATETIME COMMENT '下一个周期开始时间',
-  created_at                 DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-  updated_at                 DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-
-  INDEX idx_site_power_accounts_next_cycle (next_cycle_at)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
-
-CREATE TABLE site_power_ledger (
-  id                   INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
-  event_type           ENUM(
-    'recharge',
-    'inject',
-    'settle',
-    'pre_deduct',
-    'refund',
-    'confirm_deduct'
-  ) NOT NULL,
-  wallet_delta         DECIMAL(12,2) NOT NULL DEFAULT 0.00,
-  pool_delta           DECIMAL(12,2) NOT NULL DEFAULT 0.00,
-  task_id              VARCHAR(64) COMMENT '关联任务 ID',
-  provider_id          VARCHAR(32) COMMENT '关联 provider_id，仅任务结算场景写入',
-  provider_credit_cost DECIMAL(12,2) NOT NULL DEFAULT 0.00 COMMENT 'Provider 原始 credits 消耗',
-  power_cost           DECIMAL(12,2) NOT NULL DEFAULT 0.00 COMMENT '内部统一 power 消耗',
-  idempotency_key      VARCHAR(128) COMMENT '幂等键（inject/settle 时填写）',
-  note                 VARCHAR(256),
-  created_at           DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-
-  INDEX idx_site_power_ledger_task_id (task_id),
-  UNIQUE KEY uk_site_power_ledger_idempotency (idempotency_key)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
-
-CREATE TABLE site_power_jobs (
-  id            INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
-  job_type      ENUM('inject', 'settle') NOT NULL,
-  cycle_key     VARCHAR(96) NOT NULL COMMENT '{site}:{cycle_start_at}，幂等键',
-  status        ENUM('pending', 'done', 'failed') NOT NULL DEFAULT 'pending',
-  executed_at   DATETIME,
-  error_message VARCHAR(256),
-  created_at    DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-
-  UNIQUE KEY uk_site_power_jobs_cycle_key (cycle_key)
+  INDEX idx_quota_usage_ledger_user_id (user_id),
+  INDEX idx_quota_usage_ledger_task_id (task_id),
+  INDEX idx_quota_usage_ledger_provider_user (provider_id, user_id),
+  INDEX idx_quota_usage_ledger_created_at (created_at)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;

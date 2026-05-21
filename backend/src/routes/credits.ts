@@ -1,50 +1,50 @@
 /**
- * Credits 路由
+ * Quota routes
  *
- * GET /credits/status              — auth（站点共享额度状态）
- * GET /admin/site-power-status     — auth + requireRootUser（站点共享额度查询）
- * POST /admin/site-power-recharge  — auth + requireRootUser（站点共享额度充值）
- *
- * Legacy user-targeted admin endpoints remain mounted below for backend compatibility
- * during the rollout, but the frontend should no longer call them.
+ * GET  /credits/status                 — auth（当前用户额度状态）
+ * GET  /admin/quota/summary            — auth + requireRootUser
+ * PUT  /admin/quota/default-limit      — auth + requireRootUser
+ * POST /admin/quota/reset-usage        — auth + requireRootUser
+ * GET  /admin/user-quotas              — auth + requireRootUser
  */
 
 import { Router, RequestHandler } from 'express';
 import { auth } from '../middleware/auth';
 import { requireRootUser } from '../middleware/rootOnly';
-import { getStatusHandler, getAdminStatusHandler, rechargeHandler } from '../controllers/credits';
 import {
-  getAdminSitePowerStatusHandler,
-  getStatusHandler as getSitePowerStatusHandler,
-  rechargeSitePowerHandler,
-} from '../controllers/sitePower';
+  getQuotaStatusHandler,
+  getQuotaSummaryHandler,
+  listUserQuotasHandler,
+  resetUsageHandler,
+  updateDefaultLimitHandler,
+} from '../controllers/quota';
 
 const router = Router();
 
-router.post(
-  '/admin/recharge',
-  auth,
-  requireRootUser,
-  rechargeHandler as unknown as RequestHandler
-);
-router.get('/credits/status', auth, getSitePowerStatusHandler as unknown as RequestHandler);
+router.get('/credits/status', auth, getQuotaStatusHandler as unknown as RequestHandler);
 router.get(
-  '/admin/credits/:userId',
+  '/admin/quota/summary',
   auth,
   requireRootUser,
-  getAdminStatusHandler as unknown as RequestHandler
+  getQuotaSummaryHandler as unknown as RequestHandler
 );
-router.get(
-  '/admin/site-power-status',
+router.put(
+  '/admin/quota/default-limit',
   auth,
   requireRootUser,
-  getAdminSitePowerStatusHandler as unknown as RequestHandler
+  updateDefaultLimitHandler as unknown as RequestHandler
 );
 router.post(
-  '/admin/site-power-recharge',
+  '/admin/quota/reset-usage',
   auth,
   requireRootUser,
-  rechargeSitePowerHandler as unknown as RequestHandler
+  resetUsageHandler as unknown as RequestHandler
+);
+router.get(
+  '/admin/user-quotas',
+  auth,
+  requireRootUser,
+  listUserQuotasHandler as unknown as RequestHandler
 );
 
 export default router;

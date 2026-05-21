@@ -16,8 +16,8 @@ jest.mock('../services/crypto', () => ({
   decrypt: (...args: unknown[]) => mockDecrypt(...args),
 }));
 
-jest.mock('../services/sitePowerManager', () => ({
-  sitePowerManager: {
+jest.mock('../services/quotaToolRegistry', () => ({
+  activeQuotaTool: {
     finalizeTaskSuccess: (...args: unknown[]) => mockFinalizeTaskSuccess(...args),
     refund: jest.fn(),
   },
@@ -81,6 +81,7 @@ describe('task poller thumbnail persistence', () => {
     await jest.advanceTimersByTimeAsync(3000);
 
     expect(mockFinalizeTaskSuccess).toHaveBeenCalledWith(
+      1,
       'tripo3d',
       'task-003',
       'https://cdn.example.com/model.glb',

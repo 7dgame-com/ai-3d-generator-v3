@@ -4,34 +4,26 @@ import { describe, expect, it } from 'vitest'
 
 const source = fs.readFileSync(path.resolve(__dirname, '..', 'AdminView.vue'), 'utf8')
 
-describe('AdminView visual refresh structure', () => {
-  it('renders the quota section as a dual cockpit instead of the old soft-card layout', () => {
-    expect(source).toContain('class="quota-console"')
-    expect(source).toContain('class="quota-kpi-strip"')
-    expect(source).toContain('class="quota-console__grid"')
-    expect(source).toContain('class="pond-chamber"')
-    expect(source).toContain('class="wallet-cockpit"')
-    expect(source).not.toContain('class="quota-visuals"')
-    expect(source).not.toContain('class="wallet-widget"')
+describe('AdminView account quota structure', () => {
+  it('uses a compact account quota panel with a user quota table', () => {
+    expect(source).toContain('class="panel quota-panel"')
+    expect(source).toContain('class="quota-config"')
+    expect(source).toContain('class="quota-summary-strip"')
+    expect(source).toContain('class="user-quota-toolbar"')
+    expect(source).toContain('class="quota-table"')
   })
 
-  it('renders the compat recharge dialog as a split console with a preview dock', () => {
-    expect(source).toContain('class="compat-console"')
-    expect(source).toContain('class="compat-console__form"')
-    expect(source).toContain('class="compat-console__preview"')
-    expect(source).toContain("t('admin.previewDockTitle')")
-    expect(source).not.toContain('class="compat-preview"')
+  it('does not render the removed wallet, pond, cycle, or compatibility recharge surfaces', () => {
+    expect(source).not.toContain('class="pond-chamber"')
+    expect(source).not.toContain('class="wallet-cockpit"')
+    expect(source).not.toContain('class="compat-console"')
+    expect(source).not.toContain('class="compat-recharge-dialog"')
+    expect(source).not.toContain('cycleProgress')
   })
 
-  it('defines the approved industrial tokens and responsive stacking rules', () => {
-    expect(source).toContain('--console-bg')
-    expect(source).toContain('--pond-a')
-    expect(source).toContain('--wallet-a')
-    expect(source).toContain('.quota-status-pill')
-    expect(source).toContain('.pond-chamber__tank')
-    expect(source).toContain('.compat-console__preview')
-    expect(source).toContain('class="compat-recharge-dialog"')
-    expect(source).toContain('.compat-recharge-dialog .el-dialog__header')
-    expect(source).toContain('@media (max-width: 960px)')
+  it('keeps responsive stacking rules for the simplified admin tool surface', () => {
+    expect(source).toContain('@media (max-width: 900px)')
+    expect(source).toContain('.quota-config')
+    expect(source).toContain('.user-quota-toolbar')
   })
 })

@@ -27,9 +27,8 @@ jest.mock('../services/prepareToken', () => ({
   signPrepareToken: jest.fn(),
 }));
 
-jest.mock('../services/sitePowerManager', () => ({
-  sitePowerManager: {
-    preDeduct: jest.fn(),
+jest.mock('../services/quotaToolRegistry', () => ({
+  activeQuotaTool: {
     finalizeTaskSuccess: (...args: unknown[]) => mockFinalizeTaskSuccess(...args),
     refund: (...args: unknown[]) => mockRefund(...args),
   },
@@ -119,8 +118,8 @@ describe('directTask callbacks', () => {
     );
     expect(mockQuery).toHaveBeenNthCalledWith(
       2,
-      expect.stringContaining("UPDATE site_power_ledger SET task_id = ?"),
-      ['provider-task-001', 'temp:5:1710000000000', 'tripo3d']
+      expect.stringContaining("UPDATE quota_usage_ledger SET task_id = ?"),
+      ['provider-task-001', 5, 'temp:5:1710000000000', 'tripo3d']
     );
     expect(mockAddTaskToPoller).toHaveBeenCalledWith('provider-task-001');
     expect(res.status).toHaveBeenCalledWith(200);
@@ -266,6 +265,7 @@ describe('directTask callbacks', () => {
     await completeTask(req, res);
 
     expect(mockFinalizeTaskSuccess).toHaveBeenCalledWith(
+      5,
       'tripo3d',
       'provider-task-001',
       'https://provider.example.com/model.glb',
@@ -333,6 +333,7 @@ describe('directTask callbacks', () => {
     await completeTask(req, res);
 
     expect(mockFinalizeTaskSuccess).toHaveBeenCalledWith(
+      5,
       'hyper3d',
       'provider-task-001',
       'https://provider.example.com/model.glb',
@@ -362,7 +363,7 @@ describe('directTask callbacks', () => {
 
     await failTask(req, res);
 
-    expect(mockRefund).toHaveBeenCalledWith('tripo3d', 'provider-task-001');
+    expect(mockRefund).toHaveBeenCalledWith(5, 'tripo3d', 'provider-task-001');
     expect(mockQuery).toHaveBeenNthCalledWith(
       2,
       expect.stringContaining("UPDATE tasks SET status = 'failed'"),

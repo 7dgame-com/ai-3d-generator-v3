@@ -6,15 +6,8 @@ export const REQUIRED_TABLES = [
   'tasks',
   'credit_usage',
   'system_config',
-  'user_accounts',
-  'credit_ledger',
-  'quota_jobs',
-  'power_accounts',
-  'power_ledger',
-  'power_jobs',
-  'site_power_accounts',
-  'site_power_ledger',
-  'site_power_jobs',
+  'quota_user_usage',
+  'quota_usage_ledger',
 ] as const;
 
 export interface SchemaStatus {
@@ -47,6 +40,10 @@ interface DatabaseRow {
 
 interface TableRow {
   table_name: string;
+}
+
+interface ColumnRow {
+  column_name: string;
 }
 
 function isDisabled(value: string | undefined): boolean {
@@ -186,19 +183,49 @@ export async function runInitSchema(initSchemaPath = resolveInitSchemaPath()): P
   }
 }
 
+async function ensureKnownSchemaUpgrades(): Promise<boolean> {
+  const columnRows = await query<ColumnRow[]>(
+    `SELECT COLUMN_NAME AS column_name
+     FROM information_schema.COLUMNS
+     WHERE TABLE_SCHEMA = DATABASE()
+       AND TABLE_NAME = 'quota_user_usage'
+       AND COLUMN_NAME = 'user_snapshot'`
+  );
+
+  if (columnRows.length > 0) {
+    return false;
+  }
+
+  await query(
+    `ALTER TABLE quota_user_usage
+     ADD COLUMN user_snapshot JSON NULL COMMENT '使用时记录的主系统用户快照'
+     AFTER used_power`
+  );
+  return true;
+}
+
 export async function ensureSchemaReady(env: NodeJS.ProcessEnv = process.env): Promise<SchemaStatus> {
   let status = await inspectSchema(false);
 
   if (status.missingTables.length === 0) {
+    if (isAutoInitSchemaEnabled(env)) {
+      const upgraded = await ensureKnownSchemaUpgrades();
+      return upgraded ? { ...status, autoInitialized: true } : status;
+    }
     return status;
   }
 
-  if (status.tableCount === 0 && isAutoInitSchemaEnabled(env)) {
+  if (isAutoInitSchemaEnabled(env)) {
     await runInitSchema();
     status = await inspectSchema(true);
     if (status.missingTables.length === 0) {
+      await ensureKnownSchemaUpgrades();
       return status;
     }
+  }
+
+  if (status.missingTables.length === 0) {
+    return status;
   }
 
   throw new SchemaHealthError(status);

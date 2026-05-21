@@ -11,7 +11,6 @@ import cors from 'cors';
 import { testConnection } from './db/connection';
 import { ensureSchemaReady } from './db/schemaHealth';
 import { startPoller } from './services/taskPoller';
-import { startSiteScheduler, stopSiteScheduler } from './services/siteQuotaScheduler';
 import { startTimeoutGuardian, stopTimeoutGuardian } from './services/timeoutGuardian';
 import { parseEnabledProviders } from './config/providers';
 import { assertRuntimeConfig, validateRuntimeConfig } from './config/runtime';
@@ -152,7 +151,6 @@ async function bootstrap(): Promise<void> {
   markCheck('providers', { status: 'ok', details: { enabledProviders } });
 
   await startPoller();
-  await startSiteScheduler();
   startTimeoutGuardian();
   markCheck('workers', { status: 'ok' });
 
@@ -173,13 +171,11 @@ app.listen(PORT, () => {
 process.on('SIGTERM', () => {
   console.log('[Server] 收到 SIGTERM，正在关闭...');
   stopTimeoutGuardian();
-  stopSiteScheduler();
   process.exit(0);
 });
 
 process.on('SIGINT', () => {
   console.log('[Server] 收到 SIGINT，正在关闭...');
   stopTimeoutGuardian();
-  stopSiteScheduler();
   process.exit(0);
 });

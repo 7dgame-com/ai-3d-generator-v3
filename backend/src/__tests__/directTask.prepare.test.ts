@@ -2,11 +2,8 @@ import type { Response } from 'express';
 import { prepareTask } from '../controllers/directTask';
 
 const mockQuery = jest.fn();
-const mockPoolGetConnection = jest.fn();
 const mockDecrypt = jest.fn();
-const mockPreDeduct = jest.fn();
-const mockComputeThrottleDelay = jest.fn();
-const mockSleep = jest.fn();
+const mockReserve = jest.fn();
 const mockSignPrepareToken = jest.fn();
 
 const mockProviderIsEnabled = jest.fn();
@@ -14,23 +11,15 @@ const mockGetEnabledIds = jest.fn(() => ['tripo3d']);
 
 jest.mock('../db/connection', () => ({
   query: (...args: unknown[]) => mockQuery(...args),
-  pool: {
-    getConnection: (...args: unknown[]) => mockPoolGetConnection(...args),
-  },
 }));
 
 jest.mock('../services/crypto', () => ({
   decrypt: (...args: unknown[]) => mockDecrypt(...args),
 }));
 
-jest.mock('../services/creditManager', () => ({
-  computeThrottleDelay: (...args: unknown[]) => mockComputeThrottleDelay(...args),
-  sleep: (...args: unknown[]) => mockSleep(...args),
-}));
-
-jest.mock('../services/sitePowerManager', () => ({
-  sitePowerManager: {
-    preDeduct: (...args: unknown[]) => mockPreDeduct(...args),
+jest.mock('../services/quotaToolRegistry', () => ({
+  activeQuotaTool: {
+    reserve: (...args: unknown[]) => mockReserve(...args),
   },
 }));
 
@@ -63,39 +52,19 @@ function createResponse() {
   return { res, payload };
 }
 
-function createLockedAccountConnection(row: Record<string, unknown> | null) {
-  return {
-    beginTransaction: jest.fn().mockResolvedValue(undefined),
-    commit: jest.fn().mockResolvedValue(undefined),
-    rollback: jest.fn().mockResolvedValue(undefined),
-    release: jest.fn(),
-    query: jest.fn().mockResolvedValue([row ? [row] : []]),
-  };
-}
-
 describe('directTask.prepareTask', () => {
   beforeEach(() => {
     jest.clearAllMocks();
     mockGetEnabledIds.mockReturnValue(['tripo3d']);
     mockProviderIsEnabled.mockReturnValue(true);
     mockDecrypt.mockReturnValue('real-provider-api-key');
-    mockComputeThrottleDelay.mockReturnValue(0);
-    mockSleep.mockResolvedValue(undefined);
-    mockPreDeduct.mockResolvedValue({ success: true, walletDeducted: 1.43, poolDeducted: 0 });
+    mockReserve.mockResolvedValue({ success: true, usedPowerAfter: 1.43, remainingPower: 98.57 });
     mockSignPrepareToken.mockReturnValue('prepare-token-001');
   });
 
   it('returns api credentials, prepare token and no-store headers after pre-deduct succeeds', async () => {
-    const lockedConn = createLockedAccountConnection({
-      wallet_balance: '10.00',
-      pool_balance: '5.00',
-      pool_baseline: '5.00',
-      next_cycle_at: null,
-    });
-    mockPoolGetConnection.mockResolvedValue(lockedConn);
     mockQuery
       .mockResolvedValueOnce([{ value: 'encrypted-api-key' }])
-      .mockResolvedValueOnce([{ value: '30000' }])
       .mockResolvedValueOnce([{ value: 'direct' }]);
 
     const req = {
@@ -132,24 +101,18 @@ describe('directTask.prepareTask', () => {
         mode: 'direct',
       })
     );
-    expect(lockedConn.query).toHaveBeenCalledWith(
-      expect.stringContaining('FROM site_power_accounts'),
-      []
+    expect(mockReserve).toHaveBeenCalledWith(
+      7,
+      'tripo3d',
+      expect.any(Number),
+      expect.stringMatching(/^temp:7:/),
+      expect.objectContaining({ user_id: 7 })
     );
   });
 
   it('returns the hyper reverse proxy base in direct mode', async () => {
-    mockPoolGetConnection.mockResolvedValue(
-      createLockedAccountConnection({
-        wallet_balance: '10.00',
-        pool_balance: '5.00',
-        pool_baseline: '5.00',
-        next_cycle_at: null,
-      })
-    );
     mockQuery
       .mockResolvedValueOnce([{ value: 'encrypted-api-key' }])
-      .mockResolvedValueOnce([{ value: '30000' }])
       .mockResolvedValueOnce([{ value: 'direct' }]);
 
     const req = {
@@ -176,17 +139,8 @@ describe('directTask.prepareTask', () => {
   it('falls back to the first enabled provider when prepareTask omits provider_id', async () => {
     mockGetEnabledIds.mockReturnValue(['hyper3d']);
     mockProviderIsEnabled.mockImplementation((providerId: string) => providerId === 'hyper3d');
-    mockPoolGetConnection.mockResolvedValue(
-      createLockedAccountConnection({
-        wallet_balance: '10.00',
-        pool_balance: '5.00',
-        pool_baseline: '5.00',
-        next_cycle_at: null,
-      })
-    );
     mockQuery
       .mockResolvedValueOnce([{ value: 'encrypted-api-key' }])
-      .mockResolvedValueOnce([{ value: '30000' }])
       .mockResolvedValueOnce([{ value: 'direct' }]);
 
     const req = {
@@ -249,11 +203,16 @@ describe('directTask.prepareTask', () => {
     });
   });
 
-  it('returns INSUFFICIENT_CREDITS when no locked account snapshot exists', async () => {
-    mockPoolGetConnection.mockResolvedValue(createLockedAccountConnection(null));
+  it('returns INSUFFICIENT_CREDITS when the quota tool rejects the reservation', async () => {
+    mockReserve.mockResolvedValue({
+      success: false,
+      errorCode: 'INSUFFICIENT_CREDITS',
+      usedPowerAfter: 100,
+      remainingPower: 0,
+    });
     mockQuery
       .mockResolvedValueOnce([{ value: 'encrypted-api-key' }])
-      .mockResolvedValueOnce([{ value: '30000' }]);
+      .mockResolvedValueOnce([{ value: 'direct' }]);
 
     const req = {
       body: {
@@ -271,35 +230,5 @@ describe('directTask.prepareTask', () => {
       code: 'INSUFFICIENT_CREDITS',
       message: '额度不足',
     });
-  });
-
-  it('waits for the computed throttle delay before pre-deducting', async () => {
-    mockPoolGetConnection.mockResolvedValue(
-      createLockedAccountConnection({
-        wallet_balance: '10.00',
-        pool_balance: '2.00',
-        pool_baseline: '5.00',
-        next_cycle_at: null,
-      })
-    );
-    mockQuery
-      .mockResolvedValueOnce([{ value: 'encrypted-api-key' }])
-      .mockResolvedValueOnce([{ value: '30000' }])
-      .mockResolvedValueOnce([{ value: 'direct' }]);
-    mockComputeThrottleDelay.mockReturnValue(1200);
-
-    const req = {
-      body: {
-        type: 'text_to_model',
-        provider_id: 'tripo3d',
-      },
-      user: { userId: 12 },
-    } as unknown as Parameters<typeof prepareTask>[0];
-    const { res } = createResponse();
-
-    await prepareTask(req, res);
-
-    expect(mockSleep).toHaveBeenCalledWith(1200);
-    expect(mockPreDeduct).toHaveBeenCalled();
   });
 });

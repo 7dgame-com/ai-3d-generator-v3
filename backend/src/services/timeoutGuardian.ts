@@ -1,10 +1,11 @@
 import { query } from '../db/connection';
-import { sitePowerManager } from './sitePowerManager';
+import { activeQuotaTool } from './quotaToolRegistry';
 
 export const PREPARE_TIMEOUT_MS = 15 * 60 * 1000;
 export const GUARDIAN_INTERVAL_MS = 60 * 1000;
 
 interface TimedOutLedgerRow {
+  user_id: number;
   provider_id: string;
   task_id: string;
 }
@@ -27,15 +28,16 @@ export async function runTimeoutGuardianOnce(_now: Date = new Date()): Promise<{
 }> {
   const timeoutSeconds = Math.floor(PREPARE_TIMEOUT_MS / 1000);
   const rows = await query<TimedOutLedgerRow[]>(
-    `SELECT l.provider_id, l.task_id
-     FROM site_power_ledger l
+    `SELECT l.user_id, l.provider_id, l.task_id
+     FROM quota_usage_ledger l
      WHERE l.event_type = 'pre_deduct'
        AND l.task_id IS NOT NULL
        AND l.created_at <= DATE_SUB(NOW(), INTERVAL ? SECOND)
        AND NOT EXISTS (
          SELECT 1
-         FROM site_power_ledger settled
-         WHERE settled.provider_id = l.provider_id
+         FROM quota_usage_ledger settled
+         WHERE settled.user_id = l.user_id
+           AND settled.provider_id = l.provider_id
            AND settled.task_id = l.task_id
            AND settled.event_type IN ('confirm_deduct', 'refund')
        )`,
@@ -47,7 +49,7 @@ export async function runTimeoutGuardianOnce(_now: Date = new Date()): Promise<{
 
   for (const row of rows ?? []) {
     try {
-      await sitePowerManager.refund(row.provider_id, row.task_id);
+      await activeQuotaTool.refund(row.user_id, row.provider_id, row.task_id);
       await query(
         "UPDATE tasks SET status = 'timeout', error_message = '前端未及时回调，系统自动退款', completed_at = NOW() WHERE task_id = ? AND status IN ('queued', 'processing')",
         [row.task_id]

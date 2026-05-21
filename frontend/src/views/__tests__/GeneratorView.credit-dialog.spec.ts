@@ -345,7 +345,7 @@ describe('GeneratorView credit dialog integration', () => {
 
       await fileInput.trigger('change')
       await flushPromises()
-      await wrapper.findAll('button').at(1)?.trigger('click')
+      await wrapper.findAll('button').filter((button) => button.text() === 'Generate').at(1)?.trigger('click')
 
       expect(mocks.triggerDialog).toHaveBeenCalledTimes(1)
       expect(mocks.elMessageError).not.toHaveBeenCalled()

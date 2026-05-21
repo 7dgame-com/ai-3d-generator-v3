@@ -20,38 +20,27 @@ describe('database credit cost precision', () => {
     expect(migration).toContain('MODIFY COLUMN credit_cost DECIMAL(12,2)');
   });
 
-  it('defines the new global power account tables in schema.sql', () => {
+  it('defines simple per-user usage quota tables in schema.sql', () => {
     const schema = readDbFile('schema.sql');
 
-    expect(schema).toContain('CREATE TABLE power_accounts');
-    expect(schema).toContain('CREATE TABLE power_ledger');
-    expect(schema).toContain('CREATE TABLE power_jobs');
+    expect(schema).toContain('CREATE TABLE IF NOT EXISTS quota_user_usage');
+    expect(schema).toContain('used_power  DECIMAL(12,2) NOT NULL DEFAULT 0.00');
+    expect(schema).toContain('user_snapshot JSON NULL');
+    expect(schema).toContain('CREATE TABLE IF NOT EXISTS quota_usage_ledger');
+    expect(schema).toContain("event_type           ENUM('pre_deduct', 'refund', 'confirm_deduct', 'admin_reset')");
   });
 
-  it('includes a migration that backfills task power_cost and creates global account tables', () => {
-    const migration = readDbFile('migrate_global_power_accounts.sql');
+  it('includes a migration that creates simple quota tables and drops retired quota tables', () => {
+    const migration = readDbFile('migrate_simple_user_usage_quota.sql');
 
-    expect(migration).toContain('ALTER TABLE tasks');
-    expect(migration).toContain("WHEN 'tripo3d' THEN credit_cost / 30");
-    expect(migration).toContain("WHEN 'hyper3d' THEN credit_cost / 0.5");
-    expect(migration).toContain('CREATE TABLE IF NOT EXISTS power_accounts');
-    expect(migration).toContain('CREATE TABLE IF NOT EXISTS power_ledger');
-    expect(migration).toContain('CREATE TABLE IF NOT EXISTS power_jobs');
-  });
-
-  it('defines dedicated site power tables in schema.sql', () => {
-    const schema = readDbFile('schema.sql');
-
-    expect(schema).toContain('CREATE TABLE site_power_accounts');
-    expect(schema).toContain('CREATE TABLE site_power_ledger');
-    expect(schema).toContain('CREATE TABLE site_power_jobs');
-  });
-
-  it('includes a migration that creates dedicated site power tables', () => {
-    const migration = readDbFile('migrate_site_power.sql');
-
-    expect(migration).toContain('CREATE TABLE IF NOT EXISTS site_power_accounts');
-    expect(migration).toContain('CREATE TABLE IF NOT EXISTS site_power_ledger');
-    expect(migration).toContain('CREATE TABLE IF NOT EXISTS site_power_jobs');
+    expect(migration).toContain('CREATE TABLE IF NOT EXISTS quota_user_usage');
+    expect(migration).toContain('user_snapshot JSON NULL');
+    expect(migration).toContain('CREATE TABLE IF NOT EXISTS quota_usage_ledger');
+    expect(migration).toContain("('quota.default_limit_power', '0')");
+    expect(migration).toContain('DROP TABLE IF EXISTS site_power_accounts');
+    expect(migration).toContain('DROP TABLE IF EXISTS power_accounts');
+    expect(migration).toContain('DROP TABLE IF EXISTS quota_jobs');
+    expect(migration).toContain('DROP TABLE IF EXISTS credit_ledger');
+    expect(migration).toContain('DROP TABLE IF EXISTS user_accounts');
   });
 });

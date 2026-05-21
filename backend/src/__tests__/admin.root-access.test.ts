@@ -67,7 +67,9 @@ describe('root-only admin access', () => {
     );
     expect(adminRouteSource).not.toContain('requirePermission');
     expect(creditsRouteSource).toContain('requireRootUser');
-    expect(creditsRouteSource).toContain("router.get('/credits/status', auth, getSitePowerStatusHandler as unknown as RequestHandler);");
+    expect(creditsRouteSource).toContain("router.get('/credits/status', auth, getQuotaStatusHandler as unknown as RequestHandler);");
+    expect(creditsRouteSource).toContain("'/admin/quota/summary'");
+    expect(creditsRouteSource).toContain("'/admin/user-quotas'");
     expect(creditsRouteSource).not.toContain('requirePermission');
   });
 });

@@ -7,11 +7,8 @@ import { prepareTask } from '../controllers/directTask'
 /* ------------------------------------------------------------------ */
 
 const mockQuery = jest.fn()
-const mockPoolGetConnection = jest.fn()
 const mockDecrypt = jest.fn()
-const mockPreDeduct = jest.fn()
-const mockComputeThrottleDelay = jest.fn()
-const mockSleep = jest.fn()
+const mockReserve = jest.fn()
 const mockSignPrepareToken = jest.fn()
 const mockGetTripoRegion = jest.fn()
 
@@ -20,23 +17,15 @@ const mockGetEnabledIds = jest.fn(() => ['tripo3d'])
 
 jest.mock('../db/connection', () => ({
   query: (...args: unknown[]) => mockQuery(...args),
-  pool: {
-    getConnection: (...args: unknown[]) => mockPoolGetConnection(...args),
-  },
 }))
 
 jest.mock('../services/crypto', () => ({
   decrypt: (...args: unknown[]) => mockDecrypt(...args),
 }))
 
-jest.mock('../services/creditManager', () => ({
-  computeThrottleDelay: (...args: unknown[]) => mockComputeThrottleDelay(...args),
-  sleep: (...args: unknown[]) => mockSleep(...args),
-}))
-
-jest.mock('../services/sitePowerManager', () => ({
-  sitePowerManager: {
-    preDeduct: (...args: unknown[]) => mockPreDeduct(...args),
+jest.mock('../services/quotaToolRegistry', () => ({
+  activeQuotaTool: {
+    reserve: (...args: unknown[]) => mockReserve(...args),
   },
 }))
 
@@ -77,16 +66,6 @@ function createResponse() {
   return { res, payload }
 }
 
-function createLockedAccountConnection(row: Record<string, unknown> | null) {
-  return {
-    beginTransaction: jest.fn().mockResolvedValue(undefined),
-    commit: jest.fn().mockResolvedValue(undefined),
-    rollback: jest.fn().mockResolvedValue(undefined),
-    release: jest.fn(),
-    query: jest.fn().mockResolvedValue([row ? [row] : []]),
-  }
-}
-
 /* ------------------------------------------------------------------ */
 /*  Arbitraries                                                       */
 /* ------------------------------------------------------------------ */
@@ -110,9 +89,7 @@ describe('Feature: tripo3d-dual-region, Property 6: prepareTask 返回正确区�
     mockGetEnabledIds.mockReturnValue(['tripo3d'])
     mockProviderIsEnabled.mockReturnValue(true)
     mockDecrypt.mockReturnValue('real-provider-api-key')
-    mockComputeThrottleDelay.mockReturnValue(0)
-    mockSleep.mockResolvedValue(undefined)
-    mockPreDeduct.mockResolvedValue({ success: true, walletDeducted: 1.43, poolDeducted: 0 })
+    mockReserve.mockResolvedValue({ success: true, usedPowerAfter: 1.43, remainingPower: 98.57 })
     mockSignPrepareToken.mockReturnValue('prepare-token-001')
   })
 
@@ -122,20 +99,10 @@ describe('Feature: tripo3d-dual-region, Property 6: prepareTask 返回正确区�
         // Mock getTripoRegion to return the generated region
         mockGetTripoRegion.mockResolvedValue(region)
 
-        // Mock DB queries: api key lookup, max_delay_ms, api_mode
+        // Mock DB queries: api key lookup, api_mode
         mockQuery
           .mockResolvedValueOnce([{ value: 'encrypted-api-key' }])
-          .mockResolvedValueOnce([{ value: '30000' }])
           .mockResolvedValueOnce([{ value: 'direct' }])
-
-        mockPoolGetConnection.mockResolvedValue(
-          createLockedAccountConnection({
-            wallet_balance: '10.00',
-            pool_balance: '5.00',
-            pool_baseline: '5.00',
-            next_cycle_at: null,
-          }),
-        )
 
         const req = {
           body: { type: 'text_to_model', provider_id: 'tripo3d' },
@@ -157,9 +124,7 @@ describe('Feature: tripo3d-dual-region, Property 6: prepareTask 返回正确区�
         mockGetEnabledIds.mockReturnValue(['tripo3d'])
         mockProviderIsEnabled.mockReturnValue(true)
         mockDecrypt.mockReturnValue('real-provider-api-key')
-        mockComputeThrottleDelay.mockReturnValue(0)
-        mockSleep.mockResolvedValue(undefined)
-        mockPreDeduct.mockResolvedValue({ success: true, walletDeducted: 1.43, poolDeducted: 0 })
+        mockReserve.mockResolvedValue({ success: true, usedPowerAfter: 1.43, remainingPower: 98.57 })
         mockSignPrepareToken.mockReturnValue('prepare-token-001')
       }),
       { numRuns: 100 },

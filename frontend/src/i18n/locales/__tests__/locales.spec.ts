@@ -43,28 +43,15 @@ describe('locale packs', () => {
     expect(description).not.toMatch(/Tripo3D|Hyper3D/i)
   })
 
-  it('zh-CN defines the compatibility recharge locale keys', () => {
+  it('zh-CN defines the account quota locale keys', () => {
     const keys = collectKeyPaths(zhCN)
 
-    expect(keys).toContain('admin.compatRechargeAction')
-    expect(keys).toContain('admin.compatTotalPower')
-    expect(keys).toContain('admin.compatWalletPercent')
-    expect(keys).toContain('admin.compatPoolPercent')
-    expect(keys).toContain('admin.compatRechargeValidationPercent')
-    expect(keys).toContain('admin.compatRechargeValidationDuration')
-    expect(keys).toContain('admin.compatPreviewWallet')
-    expect(keys).toContain('admin.compatPreviewCycleHours')
-  })
-
-  it('zh-CN defines the admin cockpit visual refresh keys', () => {
-    const keys = collectKeyPaths(zhCN)
-
-    expect(keys).toContain('admin.statusOnline')
-    expect(keys).toContain('admin.statusLowReserve')
-    expect(keys).toContain('admin.statusDepleted')
-    expect(keys).toContain('admin.statusStandby')
-    expect(keys).toContain('admin.pondChamberTitle')
-    expect(keys).toContain('admin.walletScheduleTitle')
-    expect(keys).toContain('admin.previewDockTitle')
+    expect(keys).toContain('admin.accountQuotaTitle')
+    expect(keys).toContain('admin.defaultQuotaLimit')
+    expect(keys).toContain('admin.resetAllUsage')
+    expect(keys).toContain('admin.userSearchPlaceholder')
+    expect(keys).toContain('admin.hasQuotaRecord')
+    expect(keys).toContain('admin.noQuotaRecord')
+    expect(keys).toContain('admin.balanceUnavailable')
   })
 })

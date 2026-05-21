@@ -3,21 +3,16 @@ import { createTask, getTask, listTasks } from '../controllers/task';
 import { creditToPower } from '../config/providers';
 
 const mockQuery = jest.fn();
-const mockPoolGetConnection = jest.fn();
 const mockDecrypt = jest.fn();
 const mockAddTaskToPoller = jest.fn();
-const mockPreDeduct = jest.fn();
-const mockSleep = jest.fn();
-const mockComputeThrottleDelay = jest.fn();
+const mockReserve = jest.fn();
+const mockRefund = jest.fn();
 const mockProviderCreateTask = jest.fn();
 const mockIsDownloadExpired = jest.fn();
 const mockGetEnabledIds = jest.fn(() => ['tripo3d', 'hyper3d']);
 
 jest.mock('../db/connection', () => ({
   query: (...args: unknown[]) => mockQuery(...args),
-  pool: {
-    getConnection: (...args: unknown[]) => mockPoolGetConnection(...args),
-  },
 }));
 
 jest.mock('../services/crypto', () => ({
@@ -28,14 +23,10 @@ jest.mock('../services/taskPoller', () => ({
   addTaskToPoller: (...args: unknown[]) => mockAddTaskToPoller(...args),
 }));
 
-jest.mock('../services/creditManager', () => ({
-  computeThrottleDelay: (...args: unknown[]) => mockComputeThrottleDelay(...args),
-  sleep: (...args: unknown[]) => mockSleep(...args),
-}));
-
-jest.mock('../services/sitePowerManager', () => ({
-  sitePowerManager: {
-    preDeduct: (...args: unknown[]) => mockPreDeduct(...args),
+jest.mock('../services/quotaToolRegistry', () => ({
+  activeQuotaTool: {
+    reserve: (...args: unknown[]) => mockReserve(...args),
+    refund: (...args: unknown[]) => mockRefund(...args),
   },
 }));
 
@@ -71,24 +62,13 @@ function createResponse() {
   return { res, payload };
 }
 
-function createLockedAccountConnection(row: Record<string, unknown>) {
-  return {
-    beginTransaction: jest.fn().mockResolvedValue(undefined),
-    commit: jest.fn().mockResolvedValue(undefined),
-    rollback: jest.fn().mockResolvedValue(undefined),
-    release: jest.fn(),
-    query: jest.fn().mockResolvedValue([[row]]),
-  };
-}
-
 describe('task controller power fields', () => {
   beforeEach(() => {
     jest.clearAllMocks();
     mockGetEnabledIds.mockReturnValue(['tripo3d', 'hyper3d']);
     mockDecrypt.mockReturnValue('real-api-key');
-    mockComputeThrottleDelay.mockReturnValue(0);
-    mockSleep.mockResolvedValue(undefined);
-    mockPreDeduct.mockResolvedValue({ success: true, walletDeducted: 1, poolDeducted: 0 });
+    mockReserve.mockResolvedValue({ success: true, usedPowerAfter: 1, remainingPower: 99 });
+    mockRefund.mockResolvedValue(undefined);
     mockProviderCreateTask.mockResolvedValue({ taskId: 'provider-task-001', pollingKey: 'provider-task-001' });
     mockIsDownloadExpired.mockReturnValue(false);
   });
@@ -182,16 +162,8 @@ describe('task controller power fields', () => {
   });
 
   it('converts estimated provider credits to power before pre-deducting', async () => {
-    const lockedConn = createLockedAccountConnection({
-      wallet_balance: '2.00',
-      pool_balance: '0.00',
-      pool_baseline: '0.00',
-      next_cycle_at: null,
-    });
-    mockPoolGetConnection.mockResolvedValue(lockedConn);
     mockQuery
       .mockResolvedValueOnce([{ value: 'encrypted-key' }])
-      .mockResolvedValueOnce([{ value: '30000' }])
       .mockResolvedValueOnce({ affectedRows: 1 })
       .mockResolvedValueOnce({ affectedRows: 1 });
 
@@ -208,29 +180,19 @@ describe('task controller power fields', () => {
 
     await createTask(req, res);
 
-    expect(mockPreDeduct).toHaveBeenCalledWith(
+    expect(mockReserve).toHaveBeenCalledWith(
+      1,
       'hyper3d',
       creditToPower('hyper3d', 0.5),
-      expect.stringMatching(/^temp:1:/)
-    );
-    expect(lockedConn.query).toHaveBeenCalledWith(
-      expect.stringContaining('FROM site_power_accounts'),
-      []
+      expect.stringMatching(/^temp:1:/),
+      expect.objectContaining({ user_id: 1 })
     );
   });
 
   it('falls back to the first enabled provider when createTask omits provider_id', async () => {
     mockGetEnabledIds.mockReturnValue(['hyper3d']);
-    const lockedConn = createLockedAccountConnection({
-      wallet_balance: '2.00',
-      pool_balance: '0.00',
-      pool_baseline: '0.00',
-      next_cycle_at: null,
-    });
-    mockPoolGetConnection.mockResolvedValue(lockedConn);
     mockQuery
       .mockResolvedValueOnce([{ value: 'encrypted-key' }])
-      .mockResolvedValueOnce([{ value: '30000' }])
       .mockResolvedValueOnce({ affectedRows: 1 })
       .mockResolvedValueOnce({ affectedRows: 1 });
 
@@ -246,10 +208,12 @@ describe('task controller power fields', () => {
 
     await createTask(req, res);
 
-    expect(mockPreDeduct).toHaveBeenCalledWith(
+    expect(mockReserve).toHaveBeenCalledWith(
+      1,
       'hyper3d',
       creditToPower('hyper3d', 0.5),
-      expect.stringMatching(/^temp:1:/)
+      expect.stringMatching(/^temp:1:/),
+      expect.objectContaining({ user_id: 1 })
     );
   });
 });

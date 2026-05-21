@@ -31,26 +31,25 @@ describe('Feature: ai-3d-v3-i18n-credit-dialog, Property 1: Credit exhaustion de
     isRootUser.value = false
   })
 
-  it('returns true iff the global account has no available credits', async () => {
+  it('returns true iff the current account has no remaining quota', async () => {
     const { isAllCreditsZero } = await import('../useCreditCheck')
 
     await fc.assert(
       fc.asyncProperty(
         fc.option(
           fc.record({
-            wallet_balance: fc.integer({ min: -1000, max: 1000 }),
-            pool_balance: fc.integer({ min: -1000, max: 1000 }),
-            pool_baseline: fc.integer({ min: -1000, max: 1000 }),
-            cycles_remaining: fc.integer({ min: 0, max: 1000 }),
-            cycle_duration: fc.integer({ min: 0, max: 100000 }),
-            total_duration: fc.integer({ min: 0, max: 100000 }),
-            cycle_started_at: fc.option(fc.string(), { nil: null }),
-            next_cycle_at: fc.option(fc.string(), { nil: null }),
+            tool: fc.constant('simple-user-usage-quota' as const),
+            user_id: fc.integer({ min: 1, max: 100000 }),
+            quota_limit: fc.integer({ min: 0, max: 1000 }),
+            used_power: fc.integer({ min: 0, max: 1000 }),
+            remaining_power: fc.integer({ min: -1000, max: 1000 }),
+            has_record: fc.boolean(),
+            updated_at: fc.option(fc.string(), { nil: null }),
           }),
           { nil: null }
         ),
         async (status) => {
-          const expected = !!status && status.wallet_balance + status.pool_balance <= 0
+          const expected = !!status && status.remaining_power <= 0
           expect(isAllCreditsZero(status)).toBe(expected)
         }
       ),
@@ -64,14 +63,13 @@ describe('Feature: ai-3d-v3-i18n-credit-dialog, Property 1: Credit exhaustion de
     getCreditStatus.mockResolvedValue({
       data: {
         data: {
-          wallet_balance: 0,
-          pool_balance: 0,
-          pool_baseline: 0,
-          cycles_remaining: 0,
-          cycle_duration: 0,
-          total_duration: 0,
-          cycle_started_at: null,
-          next_cycle_at: null,
+          tool: 'simple-user-usage-quota',
+          user_id: 7,
+          quota_limit: 100,
+          used_power: 100,
+          remaining_power: 0,
+          has_record: true,
+          updated_at: '2026-05-21T00:00:00.000Z',
         },
       },
     })
@@ -85,6 +83,11 @@ describe('Feature: ai-3d-v3-i18n-credit-dialog, Property 1: Credit exhaustion de
     await creditCheck.checkCredits()
 
     expect(getCreditStatus).toHaveBeenCalledTimes(1)
+    expect(creditCheck.quotaStatus.value).toMatchObject({
+      used_power: 100,
+      remaining_power: 0,
+    })
+    expect(creditCheck.isCheckingCredits.value).toBe(false)
     expect(creditCheck.showCreditDialog.value).toBe(true)
   })
 
@@ -105,6 +108,8 @@ describe('Feature: ai-3d-v3-i18n-credit-dialog, Property 1: Credit exhaustion de
     const creditCheck = useCreditCheck()
 
     await expect(creditCheck.checkCredits()).resolves.toBeUndefined()
+    expect(creditCheck.quotaStatus.value).toBe(null)
+    expect(creditCheck.isCheckingCredits.value).toBe(false)
     expect(creditCheck.showCreditDialog.value).toBe(false)
   })
 

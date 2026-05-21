@@ -38,8 +38,8 @@ describe('CreditDialog', () => {
     })
 
     expect(wrapper.text()).toContain('Insufficient Credits')
-    expect(wrapper.text()).toContain('The shared site quota is depleted.')
-    expect(wrapper.text()).toContain('Go to Recharge')
+    expect(wrapper.text()).toContain('The current account quota is depleted.')
+    expect(wrapper.text()).toContain('Go to Quotas')
     expect(wrapper.text()).not.toContain('OK')
 
     await wrapper.get('button').trigger('click')
@@ -59,9 +59,9 @@ describe('CreditDialog', () => {
       },
     })
 
-    expect(wrapper.text()).toContain('Insufficient credits to generate 3D models.')
+    expect(wrapper.text()).toContain('This account does not have enough quota to generate 3D models.')
     expect(wrapper.text()).toContain('OK')
-    expect(wrapper.text()).not.toContain('Go to Recharge')
+    expect(wrapper.text()).not.toContain('Go to Quotas')
 
     await wrapper.get('button').trigger('click')
 

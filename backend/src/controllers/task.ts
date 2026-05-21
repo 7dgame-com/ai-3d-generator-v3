@@ -1,16 +1,15 @@
 import { Request, Response } from 'express';
-import { pool, query } from '../db/connection';
+import { query } from '../db/connection';
 import { creditToPower, getEstimatedCreditCost } from '../config/providers';
 import { decrypt } from '../services/crypto';
 import { addTaskToPoller } from '../services/taskPoller';
 import { AuthenticatedRequest } from '../middleware/auth';
-import { computeThrottleDelay, sleep } from '../services/creditManager';
-import { type DeductResult } from '../services/powerManager';
-import { sitePowerManager } from '../services/sitePowerManager';
+import { activeQuotaTool } from '../services/quotaToolRegistry';
+import { type QuotaReserveResult } from '../services/quotaTool';
+import { buildQuotaUserSnapshot } from '../services/quotaUserSnapshot';
 import { providerRegistry } from '../adapters/ProviderRegistry';
 import { computeExpiresAt, isDownloadExpired } from '../utils/urlExpiry';
 import { normalizeTaskBilling } from '../utils/taskBilling';
-const DEFAULT_MAX_THROTTLE_DELAY_MS = 30000;
 const DIRECT_PROVIDER_STATUS_KEY_PREFIX = 'direct:';
 const LIST_VISIBLE_TASKS_PREDICATE = `
 status != 'success'
@@ -22,13 +21,6 @@ OR (
     OR completed_at > DATE_SUB(NOW(), INTERVAL 24 HOUR)
   )
 )`;
-
-interface AccountSnapshot {
-  wallet_balance: string;
-  pool_balance: string;
-  pool_baseline: string;
-  next_cycle_at: Date | null;
-}
 
 interface MissingExpiresAtRow {
   task_id: string;
@@ -104,36 +96,6 @@ async function getApiKey(providerId: string): Promise<string> {
   return decrypt(rows[0].value);
 }
 
-async function getMaxThrottleDelayMs(): Promise<number> {
-  const rows = await query<Array<{ value: string }>>(
-    'SELECT `value` FROM system_config WHERE `key` = ? LIMIT 1',
-    ['max_delay_ms']
-  );
-  const parsed = Number(rows?.[0]?.value ?? DEFAULT_MAX_THROTTLE_DELAY_MS);
-  return Number.isFinite(parsed) && parsed >= 0 ? parsed : DEFAULT_MAX_THROTTLE_DELAY_MS;
-}
-
-async function getLockedSiteAccountSnapshot(): Promise<AccountSnapshot | null> {
-  const conn = await pool.getConnection();
-  try {
-    await conn.beginTransaction();
-    const [rows] = await conn.query<any[]>(
-      `SELECT wallet_balance, pool_balance, pool_baseline, next_cycle_at
-       FROM site_power_accounts
-       WHERE id = 1
-       FOR UPDATE`,
-      []
-    );
-    await conn.commit();
-    return rows?.[0] ?? null;
-  } catch (err) {
-    await conn.rollback();
-    throw err;
-  } finally {
-    conn.release();
-  }
-}
-
 export async function createTask(req: Request, res: Response): Promise<void> {
   const userId = (req as AuthenticatedRequest).user.userId;
   const { type, prompt, imageBase64, mimeType, provider_id: rawProviderId } = req.body as {
@@ -174,57 +136,20 @@ export async function createTask(req: Request, res: Response): Promise<void> {
     return;
   }
 
-  // Step 1: Lock account snapshot and evaluate throttle/available balance
-  let accountSnapshot: AccountSnapshot | null;
-  try {
-    accountSnapshot = await getLockedSiteAccountSnapshot();
-  } catch (err) {
-    console.error('[TaskController] 读取额度账户失败:', err);
-    res.status(500).json({ code: 5001, message: '服务器内部错误' });
-    return;
-  }
-
-  if (!accountSnapshot) {
-    res.status(422).json({ code: 'INSUFFICIENT_CREDITS', message: '额度不足' });
-    return;
-  }
-
-  const poolCurrent = Number(accountSnapshot.pool_balance);
-  const poolBaseline = Number(accountSnapshot.pool_baseline);
-  const totalBalance = Number(accountSnapshot.wallet_balance) + poolCurrent;
-  const maxThrottleDelayMs = await getMaxThrottleDelayMs();
-  const delayMs = computeThrottleDelay(poolCurrent, poolBaseline, maxThrottleDelayMs);
-
-  if (delayMs === -1) {
-    const nextCycleAt = accountSnapshot.next_cycle_at;
-    const suggestedWaitSeconds = nextCycleAt
-      ? Math.max(0, Math.floor((nextCycleAt.getTime() - Date.now()) / 1000))
-      : 3600;
-    res.status(429).json({
-      code: 'POOL_EXHAUSTED',
-      message: '池塘额度已耗尽',
-      data: { provider_id: providerId, poolCurrent, poolBaseline, nextCycleAt, suggestedWaitSeconds },
-    });
-    return;
-  }
-
-  // Step 2: Pre-deduct credits BEFORE calling provider API
-  let preDeductResult: DeductResult | null = null;
+  // Pre-deduct usage BEFORE calling provider API.
+  let preDeductResult: QuotaReserveResult | null = null;
   const estimatedCreditCost = getEstimatedCreditCost(providerId);
   const estimatedPower = creditToPower(providerId, estimatedCreditCost);
-  if (totalBalance < estimatedPower) {
-    res.status(422).json({ code: 'INSUFFICIENT_CREDITS', message: '额度不足' });
-    return;
-  }
-
-  if (delayMs > 0) {
-    await sleep(delayMs);
-  }
-
-  // Use a temp taskId for pre-deduction; will be updated after provider returns real task_id
+  // Use a temp taskId for pre-deduction; will be updated after provider returns real task_id.
   const tempTaskId = `temp:${userId}:${Date.now()}`;
   try {
-    preDeductResult = await sitePowerManager.preDeduct(providerId, estimatedPower, tempTaskId);
+    preDeductResult = await activeQuotaTool.reserve(
+      userId,
+      providerId,
+      estimatedPower,
+      tempTaskId,
+      buildQuotaUserSnapshot((req as AuthenticatedRequest).user)
+    );
     if (!preDeductResult.success) {
       if (preDeductResult.errorCode === 'INSUFFICIENT_CREDITS') {
         res.status(422).json({ code: 'INSUFFICIENT_CREDITS', message: '额度不足' });
@@ -256,7 +181,7 @@ export async function createTask(req: Request, res: Response): Promise<void> {
       console.error('[TaskController] DB insert error:', err);
       if (preDeductResult?.success) {
         try {
-          await sitePowerManager.refund(providerId, tempTaskId);
+          await activeQuotaTool.refund(userId, providerId, tempTaskId);
         } catch (refundErr) {
           console.error('[TaskController] DB insert 失败后的退款失败:', (refundErr as Error).message);
         }
@@ -268,7 +193,7 @@ export async function createTask(req: Request, res: Response): Promise<void> {
     // Provider call failed — refund the pre-deduction if it was made
     if (preDeductResult?.success) {
       try {
-        await sitePowerManager.refund(providerId, tempTaskId);
+        await activeQuotaTool.refund(userId, providerId, tempTaskId);
       } catch (refundErr) {
         console.error('[TaskController] 退款失败 (tempTaskId):', (refundErr as Error).message);
       }
@@ -282,8 +207,8 @@ export async function createTask(req: Request, res: Response): Promise<void> {
   if (preDeductResult?.success) {
     try {
       await query(
-        "UPDATE site_power_ledger SET task_id = ? WHERE task_id = ? AND provider_id = ? AND event_type = 'pre_deduct'",
-        [providerTaskId, tempTaskId, providerId]
+        "UPDATE quota_usage_ledger SET task_id = ? WHERE user_id = ? AND task_id = ? AND provider_id = ? AND event_type = 'pre_deduct'",
+        [providerTaskId, userId, tempTaskId, providerId]
       );
     } catch (err) {
       console.error('[TaskController] 更新 ledger task_id 失败:', (err as Error).message);

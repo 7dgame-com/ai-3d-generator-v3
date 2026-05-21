@@ -206,25 +206,48 @@ export interface UsageHistoryItem {
   status: TaskStatus
 }
 
-export interface PowerAccountStatus {
-  wallet_balance: number
-  pool_balance: number
-  pool_baseline: number
-  cycles_remaining: number
-  cycle_duration: number
-  total_duration: number
-  cycle_started_at: string | null
-  next_cycle_at: string | null
+export interface QuotaStatus {
+  tool: 'simple-user-usage-quota'
+  user_id: number
+  quota_limit: number
+  used_power: number
+  remaining_power: number
+  has_record: boolean
+  updated_at: string | null
+  user_snapshot?: {
+    user_id: number
+    username?: string
+    nickname?: string | null
+    email?: string | null
+    status?: number
+    roles?: string[]
+    captured_at?: string
+  } | null
 }
 
-export interface SitePowerRechargePayload {
-  total_power: number
-  wallet_percent: number
-  pool_percent: number
-  wallet_amount: number
-  pool_amount: number
-  total_duration: number
-  cycle_duration: number
+export interface QuotaSummary {
+  tool: 'simple-user-usage-quota'
+  quota_limit: number
+  used_user_count: number
+  total_used_power: number
+  total_remaining_power: number
+}
+
+export interface UserQuotaItem {
+  id: number
+  username?: string
+  nickname?: string | null
+  email?: string | null
+  status?: number
+  roles?: string[]
+  quota: QuotaStatus | null
+}
+
+export interface Pagination {
+  page: number
+  pageSize: number
+  total: number
+  totalPages: number
 }
 
 export interface PrepareTaskResponse {
@@ -337,18 +360,32 @@ export const getAdminUsage = () =>
   }>('/admin/usage')
 
 export const getCreditStatus = (providerId?: string) =>
-  backendApi.get<{ data: PowerAccountStatus }>('/credits/status', {
+  backendApi.get<{ data: QuotaStatus }>('/credits/status', {
     params: providerId ? { provider_id: providerId } : undefined,
   })
 
-export const getSitePowerStatus = () =>
-  backendApi.get<{ data: PowerAccountStatus }>('/admin/site-power-status')
+export const getQuotaSummary = () =>
+  backendApi.get<{ data: QuotaSummary }>('/admin/quota/summary')
 
-export const rechargeSitePower = (payload: SitePowerRechargePayload) =>
-  backendApi.post<{ success: boolean; data: PowerAccountStatus }>(
-    '/admin/site-power-recharge',
-    payload
-  )
+export const updateDefaultQuotaLimit = (quotaLimit: number) =>
+  backendApi.put<{ success: boolean; data: QuotaSummary }>('/admin/quota/default-limit', {
+    quota_limit: quotaLimit,
+  })
+
+export const resetQuotaUsage = (note?: string) =>
+  backendApi.post<{
+    success: boolean
+    data: { affectedUsers: number; clearedPower: number; summary: QuotaSummary }
+  }>('/admin/quota/reset-usage', note ? { note } : {})
+
+export const getUserQuotas = (params?: {
+  search?: string
+  page?: number
+  pageSize?: number
+}) =>
+  backendApi.get<{ data: UserQuotaItem[]; pagination: Pagination }>('/admin/user-quotas', {
+    params,
+  })
 
 export const getUsageSummary = () =>
   backendApi.get<{

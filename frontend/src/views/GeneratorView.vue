@@ -21,6 +21,28 @@
         </span>
       </div>
 
+      <div class="account-quota-strip" data-test="account-quota-strip">
+        <div class="quota-strip-copy">
+          <span>{{ t('generator.accountQuota') }}</span>
+          <strong>{{ t('generator.accountQuotaRemaining', { power: formatQuotaPower(quotaRemainingPower) }) }}</strong>
+        </div>
+        <div class="quota-strip-meter">
+          <el-progress
+            :percentage="quotaUsagePercentage"
+            :show-text="false"
+            :status="quotaProgressStatus"
+          />
+        </div>
+        <div class="quota-strip-metrics">
+          <span>{{ t('generator.remainingPower') }} <strong>{{ formatQuotaPower(quotaRemainingPower) }}</strong></span>
+          <span>{{ t('generator.usedPower') }} <strong>{{ formatQuotaPower(quotaUsedPower) }}</strong></span>
+          <span>{{ t('generator.quotaLimit') }} <strong>{{ formatQuotaPower(quotaLimitPower) }}</strong></span>
+        </div>
+        <el-button text :loading="isCheckingCredits" @click="refreshAccountQuota">
+          {{ t('common.refresh') }}
+        </el-button>
+      </div>
+
       <el-tabs v-model="mode">
         <el-tab-pane :label="t('generator.textTab')" name="text">
           <el-input v-model="prompt" type="textarea" :rows="4" :maxlength="500" show-word-limit />
@@ -176,7 +198,7 @@
 </template>
 
 <script setup lang="ts">
-import { onBeforeUnmount, onMounted, ref } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import { ElMessage } from 'element-plus'
 import { UploadFilled } from '@element-plus/icons-vue'
 import { downloadTaskFile, fetchThumbnailBlob, getEnabledProviders, listTasks, type Task } from '../api'
@@ -203,7 +225,10 @@ import {
 const { t, locale } = useI18n()
 const router = useRouter()
 const { themeName } = useTheme()
-const { showCreditDialog, isAdmin, checkCredits, triggerDialog, closeDialog } = useCreditCheck()
+const creditCheck = useCreditCheck()
+const { showCreditDialog, isAdmin, checkCredits, triggerDialog, closeDialog } = creditCheck
+const quotaStatus = creditCheck.quotaStatus ?? ref(null)
+const isCheckingCredits = creditCheck.isCheckingCredits ?? ref(false)
 const { createTask: createDirectTask } = useDirectTaskCreation()
 const { startPolling, stopAllPolling } = useTaskPoller()
 const { uploadToMain } = useUploadService()
@@ -228,6 +253,21 @@ const brokenThumbnailTaskIds = ref<Record<string, boolean>>({})
 const thumbnailBlobUrls = ref<Record<string, string>>({})
 const acceptedImageMimeTypes = new Set(['image/png', 'image/jpeg', 'image/webp'])
 let imageDragDepth = 0
+
+const quotaRemainingPower = computed(() => quotaStatus.value?.remaining_power ?? null)
+const quotaUsedPower = computed(() => quotaStatus.value?.used_power ?? null)
+const quotaLimitPower = computed(() => quotaStatus.value?.quota_limit ?? null)
+const quotaUsagePercentage = computed(() => {
+  const limit = quotaLimitPower.value ?? 0
+  if (limit <= 0) return 0
+  const used = quotaUsedPower.value ?? 0
+  return Math.max(0, Math.min(100, Math.round((used / limit) * 100)))
+})
+const quotaProgressStatus = computed(() => {
+  if ((quotaRemainingPower.value ?? 1) <= 0) return 'exception'
+  if (quotaUsagePercentage.value >= 80) return 'warning'
+  return undefined
+})
 
 // ── 平滑进度插值 ──
 const smoothProgress = ref<Record<string, number>>({})
@@ -316,11 +356,15 @@ function isInsufficientCreditsError(error: unknown): boolean {
 onMounted(async () => {
   await loadProviders()
   await loadTasks()
-  await checkCredits()
+  await refreshAccountQuota()
   countdownTimer = window.setInterval(() => {
     countdownNowMs.value = Date.now()
   }, 60 * 1000)
 })
+
+async function refreshAccountQuota() {
+  await checkCredits()
+}
 
 async function loadProviders() {
   const response = await getEnabledProviders()
@@ -364,6 +408,13 @@ function updateTask(task: Task) {
       const nextBlobUrls = { ...thumbnailBlobUrls.value }
       delete nextBlobUrls[task.taskId]
       thumbnailBlobUrls.value = nextBlobUrls
+    }
+
+    const becameTerminal =
+      (previousTask.status === 'queued' || previousTask.status === 'processing') &&
+      !['queued', 'processing'].includes(task.status)
+    if (becameTerminal) {
+      void refreshAccountQuota()
     }
 
     tasks.value[index] = normalizeTask(task)
@@ -451,6 +502,13 @@ function handleThumbnailError(taskId: string) {
 
 function formatTaskDuration(start: string, end: string): string {
   return formatDuration(start, end, String(locale.value))
+}
+
+function formatQuotaPower(value: number | null): string {
+  if (value === null || !Number.isFinite(value)) {
+    return '-'
+  }
+  return t('generator.power', { n: Number(value.toFixed(2)) })
 }
 
 function formatDateTime(isoString: string): string {
@@ -562,6 +620,7 @@ async function submitText() {
           clearProgressTarget(createdTaskId)
         }
         void loadTasks()
+        void refreshAccountQuota()
       },
       onFail: (errorMessage) => {
         if (createdTaskId) {
@@ -572,9 +631,11 @@ async function submitText() {
           })
         }
         void loadTasks()
+        void refreshAccountQuota()
       },
     })
     createdTaskId = response.taskId
+    void refreshAccountQuota()
 
     tasks.value.unshift({
       taskId: createdTaskId,
@@ -600,6 +661,7 @@ async function submitText() {
   } catch (error) {
     if (isInsufficientCreditsError(error)) {
       triggerDialog()
+      void refreshAccountQuota()
     } else {
       ElMessage.error(getErrorMessage(error))
     }
@@ -628,6 +690,7 @@ async function submitImage() {
           clearProgressTarget(createdTaskId)
         }
         void loadTasks()
+        void refreshAccountQuota()
       },
       onFail: (errorMessage) => {
         if (createdTaskId) {
@@ -638,9 +701,11 @@ async function submitImage() {
           })
         }
         void loadTasks()
+        void refreshAccountQuota()
       },
     })
     createdTaskId = response.taskId
+    void refreshAccountQuota()
 
     tasks.value.unshift({
       taskId: createdTaskId,
@@ -668,6 +733,7 @@ async function submitImage() {
   } catch (error) {
     if (isInsufficientCreditsError(error)) {
       triggerDialog()
+      void refreshAccountQuota()
     } else {
       ElMessage.error(getErrorMessage(error))
     }
@@ -856,6 +922,60 @@ function openMainResource(resourceId: number | null) {
   margin-bottom: 16px;
 }
 
+.account-quota-strip {
+  display: grid;
+  grid-template-columns: minmax(150px, 0.65fr) minmax(180px, 1fr) auto auto;
+  gap: 14px;
+  align-items: center;
+  margin: -4px 0 18px;
+  padding: 12px 14px;
+  border: 1px solid #e3eaf3;
+  border-radius: 8px;
+  background: #f8fbff;
+}
+
+.quota-strip-copy {
+  display: grid;
+  gap: 3px;
+}
+
+.quota-strip-copy span {
+  color: #64748b;
+  font-size: 13px;
+}
+
+.quota-strip-copy strong {
+  color: #111827;
+  font-size: 16px;
+  font-weight: 700;
+  line-height: 1.3;
+}
+
+.quota-strip-meter {
+  min-width: 160px;
+}
+
+.quota-strip-metrics {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px 14px;
+  align-items: center;
+  color: #64748b;
+  font-size: 13px;
+}
+
+.quota-strip-metrics span {
+  display: inline-flex;
+  gap: 4px;
+  align-items: baseline;
+  white-space: nowrap;
+}
+
+.quota-strip-metrics strong {
+  color: #111827;
+  font-weight: 700;
+}
+
 .single-provider-label {
   display: inline-flex;
   align-items: center;
@@ -966,6 +1086,15 @@ function openMainResource(resourceId: number | null) {
 }
 
 @media (max-width: 640px) {
+  .account-quota-strip {
+    grid-template-columns: 1fr;
+    align-items: stretch;
+  }
+
+  .quota-strip-metrics {
+    justify-content: space-between;
+  }
+
   .task-card-body {
     flex-direction: column;
   }

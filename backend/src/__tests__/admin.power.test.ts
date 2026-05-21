@@ -90,6 +90,7 @@ describe('admin controller power fields', () => {
         credit_cost: 0,
         power_cost: 0,
         created_at: '2026-04-08T00:00:00.000Z',
+        user_snapshot: JSON.stringify({ user_id: 7, username: 'alice_7', nickname: 'Alice' }),
       },
       {
         user_id: 8,
@@ -97,19 +98,21 @@ describe('admin controller power fields', () => {
         credit_cost: 0.5,
         power_cost: 0,
         created_at: '2026-04-08T01:00:00.000Z',
+        user_snapshot: null,
       },
     ]);
 
     const response = await request(app).get('/admin/usage');
 
     expect(response.status).toBe(200);
+    expect(String(mockQuery.mock.calls[0][0])).toContain('LEFT JOIN quota_user_usage');
     expect(response.body).toEqual({
       totalCredits: 30.5,
       totalPower: 2,
       userRanking: [
         {
           userId: 7,
-          username: 'User 7',
+          username: 'Alice',
           credits: 30,
           power: 1,
         },
@@ -142,6 +145,7 @@ describe('admin controller power fields', () => {
         credit_cost: 0,
         power_cost: 0,
         created_at: '2026-04-08T00:00:00.000Z',
+        user_snapshot: JSON.stringify({ user_id: 7, username: 'alice_7' }),
       },
       {
         user_id: 8,
@@ -149,6 +153,7 @@ describe('admin controller power fields', () => {
         credit_cost: 0.5,
         power_cost: 0,
         created_at: '2026-04-08T01:00:00.000Z',
+        user_snapshot: null,
       },
     ]);
 
@@ -161,7 +166,7 @@ describe('admin controller power fields', () => {
       userRanking: [
         {
           userId: 7,
-          username: 'User 7',
+          username: 'alice_7',
           credits: 30,
           power: 1,
         },

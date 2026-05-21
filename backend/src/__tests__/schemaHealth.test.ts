@@ -47,7 +47,8 @@ describe('schema health checks', () => {
       .mockResolvedValueOnce([{ db: 'ai_3d_generator_v3' }])
       .mockResolvedValueOnce([])
       .mockResolvedValueOnce([{ db: 'ai_3d_generator_v3' }])
-      .mockResolvedValueOnce(REQUIRED_TABLES.map((table) => ({ table_name: table })));
+      .mockResolvedValueOnce(REQUIRED_TABLES.map((table) => ({ table_name: table })))
+      .mockResolvedValueOnce([{ column_name: 'user_snapshot' }]);
 
     const status = await ensureSchemaReady({});
 
@@ -58,12 +59,41 @@ describe('schema health checks', () => {
     expect(mockRelease).toHaveBeenCalledTimes(1);
   });
 
-  it('fails partial schemas instead of blindly running the full init schema', async () => {
+  it('auto initializes missing tables in an existing plugin database', async () => {
+    mockQuery
+      .mockResolvedValueOnce([{ db: 'ai_3d_generator_v3' }])
+      .mockResolvedValueOnce([{ table_name: 'tasks' }])
+      .mockResolvedValueOnce([{ db: 'ai_3d_generator_v3' }])
+      .mockResolvedValueOnce(REQUIRED_TABLES.map((table) => ({ table_name: table })))
+      .mockResolvedValueOnce([{ column_name: 'user_snapshot' }]);
+
+    const status = await ensureSchemaReady({});
+
+    expect(status.autoInitialized).toBe(true);
+    expect(status.missingTables).toEqual([]);
+    expect(mockGetConnection).toHaveBeenCalledTimes(1);
+  });
+
+  it('adds the quota user snapshot column to already initialized databases', async () => {
+    mockQuery
+      .mockResolvedValueOnce([{ db: 'ai_3d_generator_v3' }])
+      .mockResolvedValueOnce(REQUIRED_TABLES.map((table) => ({ table_name: table })))
+      .mockResolvedValueOnce([])
+      .mockResolvedValueOnce({ affectedRows: 1 });
+
+    const status = await ensureSchemaReady({});
+
+    expect(status.autoInitialized).toBe(true);
+    expect(String(mockQuery.mock.calls[2][0])).toContain('information_schema.COLUMNS');
+    expect(String(mockQuery.mock.calls[3][0])).toContain('ALTER TABLE quota_user_usage');
+  });
+
+  it('fails partial schemas when auto init is disabled', async () => {
     mockQuery
       .mockResolvedValueOnce([{ db: 'ai_3d_generator_v3' }])
       .mockResolvedValueOnce([{ table_name: 'tasks' }]);
 
-    await expect(ensureSchemaReady({})).rejects.toThrow(SchemaHealthError);
+    await expect(ensureSchemaReady({ AUTO_INIT_SCHEMA: 'false' })).rejects.toThrow(SchemaHealthError);
     expect(mockGetConnection).not.toHaveBeenCalled();
   });
 
