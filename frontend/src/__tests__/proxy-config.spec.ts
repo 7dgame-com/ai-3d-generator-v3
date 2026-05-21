@@ -76,6 +76,11 @@ describe('provider reverse proxy config', () => {
     changeOrigin: true,
     rewrite: (path: string) => path.replace(/^\\/tripo-alt/, '/v2/openapi')
   }`)
+    expect(viteConfig).toContain(`'/tripo-ai/': {
+    target: 'https://api.tripo3d.ai',
+    changeOrigin: true,
+    rewrite: (path: string) => path.replace(/^\\/tripo-ai/, '/v2/openapi')
+  }`)
 
     expect(viteConfig).toContain("'/hyper/': {")
     expect(viteConfig).toContain("target: 'https://api.hyper3d.com'")
@@ -87,6 +92,7 @@ describe('provider reverse proxy config', () => {
     const template = fs.readFileSync(templatePath, 'utf-8')
     const tripoBlock = getNginxLocationBlock(template, '/tripo/')
     const tripoAltBlock = getNginxLocationBlock(template, '/tripo-alt/')
+    const tripoAiCompatBlock = getNginxLocationBlock(template, '/tripo-ai/')
 
     expect(tripoBlock).toContain('set $tripo_host api.tripo3d.com')
     expect(tripoBlock).toContain('rewrite ^/tripo/(.*)$ /v2/openapi/$1 break')
@@ -104,6 +110,14 @@ describe('provider reverse proxy config', () => {
     expect(tripoAltBlock).toContain('proxy_set_header X-Forwarded-Proto https')
     expect(tripoAltBlock).toContain('proxy_redirect off')
     expect(tripoAltBlock).toContain("proxy_set_header Cookie ''")
+    expect(tripoAiCompatBlock).toContain('set $tripo_ai_host api.tripo3d.ai')
+    expect(tripoAiCompatBlock).toContain('rewrite ^/tripo-ai/(.*)$ /v2/openapi/$1 break')
+    expect(tripoAiCompatBlock).toContain('proxy_pass https://$tripo_ai_host')
+    expect(tripoAiCompatBlock).toContain('proxy_ssl_name $tripo_ai_host')
+    expect(tripoAiCompatBlock).toContain('proxy_set_header Host $tripo_ai_host')
+    expect(tripoAiCompatBlock).toContain('proxy_set_header X-Forwarded-Proto https')
+    expect(tripoAiCompatBlock).toContain('proxy_redirect off')
+    expect(tripoAiCompatBlock).toContain("proxy_set_header Cookie ''")
 
     expect(template).toContain('location /hyper/')
     expect(template).toContain('set $hyper_host api.hyper3d.com')

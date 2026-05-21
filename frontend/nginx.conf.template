@@ -51,6 +51,23 @@ server {
         proxy_redirect off;
     }
 
+    location /tripo-ai/ {
+        set $tripo_ai_host api.tripo3d.ai;
+        rewrite ^/tripo-ai/(.*)$ /v2/openapi/$1 break;
+        proxy_pass https://$tripo_ai_host;
+        proxy_ssl_server_name on;
+        proxy_ssl_name $tripo_ai_host;
+        proxy_set_header Host $tripo_ai_host;
+        proxy_set_header Cookie '';
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto https;
+        proxy_connect_timeout 5s;
+        proxy_read_timeout 120s;
+        proxy_send_timeout 120s;
+        proxy_redirect off;
+    }
+
     location /hyper/ {
         set $hyper_host api.hyper3d.com;
         rewrite ^/hyper/(.*)$ /api/v2/$1 break;

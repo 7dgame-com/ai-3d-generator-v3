@@ -114,6 +114,11 @@ const proxyConfig = {
     changeOrigin: true,
     rewrite: (path: string) => path.replace(/^\/tripo-alt/, '/v2/openapi')
   },
+  '/tripo-ai/': {
+    target: 'https://api.tripo3d.ai',
+    changeOrigin: true,
+    rewrite: (path: string) => path.replace(/^\/tripo-ai/, '/v2/openapi')
+  },
   '/hyper/': {
     target: 'https://api.hyper3d.com',
     changeOrigin: true,
