@@ -50,6 +50,10 @@ describe('root-only admin access', () => {
   });
 
   it('wires requireRootUser into both admin route groups', () => {
+    const indexSource = fs.readFileSync(
+      path.resolve(__dirname, '..', 'index.ts'),
+      'utf8'
+    );
     const adminRouteSource = fs.readFileSync(
       path.resolve(__dirname, '..', 'routes', 'admin.ts'),
       'utf8'
@@ -59,6 +63,9 @@ describe('root-only admin access', () => {
       'utf8'
     );
 
+    expect(indexSource.indexOf("app.use('/', creditsRoutes)")).toBeLessThan(
+      indexSource.indexOf("app.use('/', adminRoutes)")
+    );
     expect(adminRouteSource).toContain('requireRootUser');
     expect(adminRouteSource).toContain("router.get('/admin/providers', auth, getProvidersHandler as unknown as RequestHandler);");
     expect(adminRouteSource).toContain("router.use('/admin', auth, requireRootUser, adminRouter)");

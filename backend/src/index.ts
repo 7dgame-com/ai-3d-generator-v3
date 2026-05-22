@@ -96,13 +96,13 @@ app.get('/health', (_req: Request, res: Response) => {
 
 // ========== 路由注册 ==========
 // nginx rewrite 会去掉 /backend/ 前缀，所以这里挂载到根路径
+app.use('/', creditsRoutes);
 app.use('/', adminRoutes);
 app.use('/tasks', directTaskRoutes);
 app.use('/tasks', taskRoutes);
 app.use('/usage', usageRoutes);
 app.use('/download', downloadRoutes);
 app.use('/thumbnail', thumbnailRoutes);
-app.use('/', creditsRoutes);
 
 // ========== 全局错误处理 ==========
 app.use((err: Error & { status?: number }, _req: Request, res: Response, _next: NextFunction) => {
