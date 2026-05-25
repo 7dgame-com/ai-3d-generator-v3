@@ -262,10 +262,12 @@ export interface PrepareTaskResponse {
 
 export interface CloudBucketConfig {
   bucket: string
-  region: string
+  region?: string
+  baseUrl?: string
 }
 
 export interface MainCloudConfig {
+  driver?: 'cos' | 'local' | string
   public?: CloudBucketConfig
   private?: CloudBucketConfig
   bucket?: string
@@ -411,6 +413,21 @@ export const verifyToken = () => mainApi.get('/v1/plugin/verify-token')
 export const getCloudConfig = () => mainApi.get<MainCloudConfig>('/v1/tencent-cloud/cloud')
 export const getCosPublicToken = () =>
   mainApi.get<CosTokenResponse>('/v1/tencent-cloud/public-token', { params: {} })
+
+export interface LocalUploadResponse {
+  over: boolean
+  bucket: string
+  key: string
+  url?: string
+  filename: string
+  size: number
+  md5: string
+}
+
+export const uploadLocalFile = (data: FormData) =>
+  mainApi.post<LocalUploadResponse>('/v1/upload/file', data, {
+    headers: { 'Content-Type': 'multipart/form-data' },
+  })
 
 export const createFileRecord = (payload: {
   filename: string

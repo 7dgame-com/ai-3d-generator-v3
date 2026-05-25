@@ -7,6 +7,7 @@ const mocks = vi.hoisted(() => ({
   fetchThumbnailBlob: vi.fn(),
   getCloudConfig: vi.fn(),
   getCosPublicToken: vi.fn(),
+  uploadLocalFile: vi.fn(),
   updateTaskResource: vi.fn(),
   authParams: null as
     | {
@@ -27,6 +28,7 @@ vi.mock('../../api', () => ({
   fetchThumbnailBlob: mocks.fetchThumbnailBlob,
   getCloudConfig: mocks.getCloudConfig,
   getCosPublicToken: mocks.getCosPublicToken,
+  uploadLocalFile: mocks.uploadLocalFile,
   updateTaskResource: mocks.updateTaskResource,
 }))
 
@@ -67,6 +69,7 @@ describe('useUploadService', () => {
     mocks.fetchThumbnailBlob.mockReset()
     mocks.getCloudConfig.mockReset()
     mocks.getCosPublicToken.mockReset()
+    mocks.uploadLocalFile.mockReset()
     mocks.updateTaskResource.mockReset()
     mocks.authParams = null
     mocks.uploadCalls = []
@@ -92,6 +95,17 @@ describe('useUploadService', () => {
         },
         StartTime: 100,
         ExpiredTime: 200,
+      },
+    })
+    mocks.uploadLocalFile.mockResolvedValue({
+      data: {
+        over: true,
+        bucket: 'store',
+        key: 'ai-3d-generator-v3/task-123.glb',
+        url: '/storage/store/ai-3d-generator-v3/task-123.glb',
+        filename: 'task-123.glb',
+        size: 3,
+        md5: 'local-md5',
       },
     })
     mocks.createFileRecord
@@ -187,6 +201,65 @@ describe('useUploadService', () => {
       md5: '',
       key: 'ai-3d-generator-v3/task-123-thumbnail.jpg',
       url: 'https://cos.example.com/ai-3d-generator-v3/task-123-thumbnail.jpg',
+    })
+  })
+
+  it('uses the main backend local upload endpoint when cloud config is local', async () => {
+    mocks.getCloudConfig.mockResolvedValueOnce({
+      data: {
+        driver: 'local',
+        public: { bucket: 'store', baseUrl: '/storage' },
+      },
+    })
+    mocks.uploadLocalFile
+      .mockResolvedValueOnce({
+        data: {
+          over: true,
+          bucket: 'store',
+          key: 'ai-3d-generator-v3/task-123.glb',
+          url: '/storage/store/ai-3d-generator-v3/task-123.glb',
+          filename: 'task-123.glb',
+          size: 3,
+          md5: 'model-md5',
+        },
+      })
+      .mockResolvedValueOnce({
+        data: {
+          over: true,
+          bucket: 'store',
+          key: 'ai-3d-generator-v3/task-123-thumbnail.webp',
+          url: '/storage/store/ai-3d-generator-v3/task-123-thumbnail.webp',
+          filename: 'task-123-thumbnail.webp',
+          size: 3,
+          md5: 'thumbnail-md5',
+        },
+      })
+
+    const { useUploadService } = await import('../useUploadService')
+
+    const { uploadToMain } = useUploadService()
+    await uploadToMain('task-123', 'demo prompt', vi.fn())
+
+    expect(mocks.getCosPublicToken).not.toHaveBeenCalled()
+    expect(mocks.uploadCalls).toHaveLength(0)
+    expect(mocks.uploadLocalFile).toHaveBeenCalledTimes(2)
+
+    const modelForm = mocks.uploadLocalFile.mock.calls[0]?.[0] as FormData
+    expect(modelForm.get('bucket')).toBe('store')
+    expect(modelForm.get('directory')).toBe('ai-3d-generator-v3')
+    expect(modelForm.get('filename')).toBe('task-123.glb')
+
+    expect(mocks.createFileRecord).toHaveBeenNthCalledWith(1, {
+      filename: 'task-123.glb',
+      md5: 'model-md5',
+      key: 'ai-3d-generator-v3/task-123.glb',
+      url: '/storage/store/ai-3d-generator-v3/task-123.glb',
+    })
+    expect(mocks.createFileRecord).toHaveBeenNthCalledWith(2, {
+      filename: 'task-123-thumbnail.webp',
+      md5: 'thumbnail-md5',
+      key: 'ai-3d-generator-v3/task-123-thumbnail.webp',
+      url: '/storage/store/ai-3d-generator-v3/task-123-thumbnail.webp',
     })
   })
 })

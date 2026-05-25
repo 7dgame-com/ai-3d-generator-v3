@@ -1,8 +1,10 @@
 import { ref } from 'vue'
 import COS from 'cos-js-sdk-v5'
+import md5 from 'cos-js-sdk-v5/lib/md5'
 import {
   type CloudBucketConfig,
   type CosTokenResponse,
+  type LocalUploadResponse,
   type MainCloudConfig,
   createFileRecord,
   createResourceRecord,
@@ -10,12 +12,16 @@ import {
   fetchThumbnailBlob,
   getCloudConfig,
   getCosPublicToken,
+  uploadLocalFile,
   updateTaskResource,
 } from '../api'
 
-function resolvePublicCloudConfig(cloudData: MainCloudConfig): CloudBucketConfig {
+function resolvePublicCloudConfig(cloudData: MainCloudConfig): Required<Pick<CloudBucketConfig, 'bucket' | 'region'>> {
   if (cloudData.public?.bucket && cloudData.public.region) {
-    return cloudData.public
+    return {
+      bucket: cloudData.public.bucket,
+      region: cloudData.public.region,
+    }
   }
 
   if (cloudData.bucket && cloudData.region) {
@@ -78,6 +84,70 @@ function inferImageExtension(contentType?: string) {
   }
 }
 
+function isLocalCloudConfig(cloudData: MainCloudConfig) {
+  return String(cloudData.driver ?? '').toLowerCase() === 'local'
+}
+
+function resolveLocalConfig(cloudData: MainCloudConfig) {
+  return {
+    bucket: cloudData.public?.bucket ?? cloudData.bucket ?? 'store',
+    publicBaseUrl: (cloudData.public?.baseUrl ?? '/storage').replace(/\/+$/, ''),
+  }
+}
+
+function localObjectUrl(localConfig: ReturnType<typeof resolveLocalConfig>, key: string) {
+  const encodedKey = key
+    .split('/')
+    .map((part) => encodeURIComponent(part))
+    .join('/')
+  return `${localConfig.publicBaseUrl}/${encodeURIComponent(localConfig.bucket)}/${encodedKey}`
+}
+
+async function blobToArrayBuffer(blob: Blob): Promise<ArrayBuffer> {
+  if (typeof blob.arrayBuffer === 'function') {
+    return blob.arrayBuffer()
+  }
+
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader()
+    reader.onload = () => resolve(reader.result as ArrayBuffer)
+    reader.onerror = () => reject(reader.error ?? new Error('Blob could not be read.'))
+    reader.readAsArrayBuffer(blob)
+  })
+}
+
+async function uploadBlobToLocal(params: {
+  localConfig: ReturnType<typeof resolveLocalConfig>
+  key: string
+  body: Blob
+  onProgress?: (percent: number) => void
+}) {
+  const keyParts = params.key.split('/').filter(Boolean)
+  const filename = keyParts.pop() || 'upload.bin'
+  const directory = keyParts.join('/')
+  const checksum = md5(await blobToArrayBuffer(params.body))
+  const formData = new FormData()
+
+  formData.append('file', params.body, filename)
+  formData.append('filename', filename)
+  formData.append('md5', checksum)
+  formData.append('skip', '0')
+  formData.append('block_size', String(params.body.size))
+  formData.append('upload_size', String(params.body.size))
+  formData.append('size', String(params.body.size))
+  formData.append('directory', directory)
+  formData.append('bucket', params.localConfig.bucket)
+
+  const { data } = await uploadLocalFile(formData)
+  params.onProgress?.(100)
+
+  return {
+    key: data.key || params.key,
+    url: data.url || localObjectUrl(params.localConfig, params.key),
+    md5: data.md5 || checksum,
+  } satisfies Pick<LocalUploadResponse, 'key' | 'url' | 'md5'>
+}
+
 async function uploadBlobToCos(params: {
   cos: InstanceType<typeof COS>
   bucket: string
@@ -113,10 +183,37 @@ async function uploadBlobToCos(params: {
   }
 }
 
+async function tryUploadThumbnailLocal(params: {
+  taskId: string
+  localConfig: ReturnType<typeof resolveLocalConfig>
+}) {
+  try {
+    const { data } = await fetchThumbnailBlob(params.taskId)
+    const blob = data instanceof Blob ? data : new Blob([data])
+    const extension = inferImageExtension(blob.type)
+    const filename = `${params.taskId}-thumbnail${extension}`
+    const objectKey = `ai-3d-generator-v3/${filename}`
+    const upload = await uploadBlobToLocal({
+      localConfig: params.localConfig,
+      key: objectKey,
+      body: blob,
+    })
+    const fileRecord = await createFileRecord({
+      filename,
+      md5: upload.md5,
+      key: upload.key,
+      url: upload.url,
+    })
+    return fileRecord.data.id
+  } catch {
+    return null
+  }
+}
+
 async function tryUploadThumbnail(params: {
   taskId: string
   cos: InstanceType<typeof COS>
-  publicCloud: CloudBucketConfig
+  publicCloud: ReturnType<typeof resolvePublicCloudConfig>
 }) {
   try {
     const { data } = await fetchThumbnailBlob(params.taskId)
@@ -156,9 +253,43 @@ export function useUploadService() {
         downloadTaskBuffer(taskId),
         getCloudConfig(),
       ])
+      const objectKey = `ai-3d-generator-v3/${taskId}.glb`
+
+      if (isLocalCloudConfig(cloudData)) {
+        const localConfig = resolveLocalConfig(cloudData)
+        const uploadResult = await uploadBlobToLocal({
+          localConfig,
+          key: objectKey,
+          body: new Blob([modelBuffer], { type: 'model/gltf-binary' }),
+          onProgress,
+        })
+
+        const fileRecord = await createFileRecord({
+          filename: `${taskId}.glb`,
+          md5: uploadResult.md5,
+          key: uploadResult.key,
+          url: uploadResult.url,
+        })
+
+        const thumbnailFileId = await tryUploadThumbnailLocal({
+          taskId,
+          localConfig,
+        })
+
+        const resourceRecord = await createResourceRecord({
+          name: (prompt || taskId).slice(0, 50),
+          file_id: fileRecord.data.id,
+          ...(thumbnailFileId ? { image_id: thumbnailFileId } : {}),
+          type: 'polygen',
+        })
+
+        await updateTaskResource(taskId, resourceRecord.data.id)
+
+        return { fileId: fileRecord.data.id, resourceId: resourceRecord.data.id }
+      }
+
       const { data: tokenData } = await getCosPublicToken()
       const publicCloud = resolvePublicCloudConfig(cloudData)
-      const objectKey = `ai-3d-generator-v3/${taskId}.glb`
 
       const cos = new COS({
         getAuthorization: (

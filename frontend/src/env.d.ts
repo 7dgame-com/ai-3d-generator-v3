@@ -9,3 +9,8 @@ declare module 'cos-js-sdk-v5' {
   }
   export default COS
 }
+
+declare module 'cos-js-sdk-v5/lib/md5' {
+  const md5: (message: string | ArrayBuffer | Uint8Array | number[]) => string
+  export default md5
+}

@@ -47,7 +47,7 @@
         <el-tab-pane :label="t('generator.textTab')" name="text">
           <el-input v-model="prompt" type="textarea" :rows="4" :maxlength="500" show-word-limit />
           <div class="actions">
-            <el-button type="primary" :disabled="!prompt.trim()" :loading="submitting" @click="submitText">
+            <el-button type="primary" :disabled="providers.length === 0 || !prompt.trim()" :loading="submitting" @click="submitText">
               {{ t('generator.submit') }}
             </el-button>
           </div>
@@ -86,7 +86,7 @@
             </div>
           </div>
           <div class="actions">
-            <el-button type="primary" :disabled="!imageBase64" :loading="submitting" @click="submitImage">
+            <el-button type="primary" :disabled="providers.length === 0 || !imageBase64" :loading="submitting" @click="submitImage">
               {{ t('generator.submit') }}
             </el-button>
           </div>
@@ -602,6 +602,7 @@ function handleImageDrop(event: DragEvent) {
 }
 
 async function submitText() {
+  if (providers.value.length === 0) return
   submitting.value = true
   const taskPrompt = prompt.value
   let createdTaskId = ''
@@ -671,6 +672,7 @@ async function submitText() {
 }
 
 async function submitImage() {
+  if (providers.value.length === 0) return
   if (!imageFile.value) return
   submitting.value = true
   const sourceImageFile = imageFile.value

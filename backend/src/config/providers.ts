@@ -49,6 +49,12 @@ export function getEstimatedCreditCost(providerId: string): number {
 export function parseEnabledProviders(): string[] {
   const raw = process.env.ENABLED_PROVIDERS ?? '';
   if (!raw.trim()) {
+    const mode = (process.env.DEPLOYMENT_MODE ?? '').trim().toLowerCase();
+    const ai3dEnabled = (process.env.ENABLE_AI_3D_GENERATOR ?? '').trim().toLowerCase();
+    if (mode === 'local' || mode === 'private' || ai3dEnabled === 'false' || ai3dEnabled === '0') {
+      console.warn('[Providers] ENABLED_PROVIDERS is empty; provider-backed AI generation is disabled.');
+      return [];
+    }
     console.error('FATAL: ENABLED_PROVIDERS must specify at least one valid provider');
     process.exit(1);
   }
