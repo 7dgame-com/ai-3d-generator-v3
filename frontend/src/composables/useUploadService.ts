@@ -6,12 +6,14 @@ import {
   type CosTokenResponse,
   type LocalUploadResponse,
   type MainCloudConfig,
+  type MainDeploymentConfig,
   createFileRecord,
   createResourceRecord,
   downloadTaskBuffer,
   fetchThumbnailBlob,
   getCloudConfig,
   getCosPublicToken,
+  getDeploymentConfig,
   uploadLocalFile,
   updateTaskResource,
 } from '../api'
@@ -92,6 +94,17 @@ function resolveLocalConfig(cloudData: MainCloudConfig) {
   return {
     bucket: cloudData.public?.bucket ?? cloudData.bucket ?? 'store',
     publicBaseUrl: (cloudData.public?.baseUrl ?? '/storage').replace(/\/+$/, ''),
+  }
+}
+
+function deploymentToCloudConfig(deploymentData: MainDeploymentConfig): MainCloudConfig {
+  const mode = String(deploymentData.deploymentMode ?? '').toLowerCase()
+  return {
+    driver: deploymentData.storageDriver ?? (mode === 'local' || mode === 'private' ? 'local' : 'cos'),
+    public: {
+      bucket: deploymentData.storage?.publicBucket ?? 'store',
+      baseUrl: deploymentData.storage?.publicBaseUrl ?? '/storage',
+    },
   }
 }
 
@@ -249,14 +262,15 @@ export function useUploadService() {
     uploadError.value = null
 
     try {
-      const [{ data: modelBuffer }, { data: cloudData }] = await Promise.all([
+      const [{ data: modelBuffer }, { data: deploymentData }] = await Promise.all([
         downloadTaskBuffer(taskId),
-        getCloudConfig(),
+        getDeploymentConfig(),
       ])
       const objectKey = `ai-3d-generator-v3/${taskId}.glb`
+      const deploymentCloudData = deploymentToCloudConfig(deploymentData)
 
-      if (isLocalCloudConfig(cloudData)) {
-        const localConfig = resolveLocalConfig(cloudData)
+      if (isLocalCloudConfig(deploymentCloudData)) {
+        const localConfig = resolveLocalConfig(deploymentCloudData)
         const uploadResult = await uploadBlobToLocal({
           localConfig,
           key: objectKey,
@@ -288,6 +302,7 @@ export function useUploadService() {
         return { fileId: fileRecord.data.id, resourceId: resourceRecord.data.id }
       }
 
+      const { data: cloudData } = await getCloudConfig()
       const { data: tokenData } = await getCosPublicToken()
       const publicCloud = resolvePublicCloudConfig(cloudData)
 

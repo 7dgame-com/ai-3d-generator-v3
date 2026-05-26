@@ -1,19 +1,45 @@
 import * as fc from 'fast-check';
-import { parseEnabledProviders } from '../config/providers';
+import { parseEnabledProviders, resolveEnabledProviders } from '../config/providers';
+import { requestMainBusinessApiGet } from '../config/mainBusinessApi';
+
+jest.mock('../config/mainBusinessApi', () => ({
+  requestMainBusinessApiGet: jest.fn(),
+}));
+
+const mockedRequestMainBusinessApiGet = requestMainBusinessApiGet as jest.MockedFunction<typeof requestMainBusinessApiGet>;
 
 describe('parseEnabledProviders()', () => {
   let mockExit: jest.SpyInstance;
-  const originalEnv = process.env.ENABLED_PROVIDERS;
+  const envNames = [
+    'ENABLED_PROVIDERS',
+    'DEPLOYMENT_MODE',
+    'ENABLE_AI_3D_GENERATOR',
+    'APP_API_1_URL',
+  ] as const;
+  const originalEnv = Object.fromEntries(
+    envNames.map((name) => [name, process.env[name]])
+  ) as Record<typeof envNames[number], string | undefined>;
 
   beforeEach(() => {
     mockExit = jest.spyOn(process, 'exit').mockImplementation((code?: string | number | null | undefined) => {
       throw new Error(`process.exit(${code})`);
     });
+    mockedRequestMainBusinessApiGet.mockReset();
+    for (const name of envNames) {
+      delete process.env[name];
+    }
   });
 
   afterEach(() => {
     jest.restoreAllMocks();
-    process.env.ENABLED_PROVIDERS = originalEnv;
+    for (const name of envNames) {
+      const value = originalEnv[name];
+      if (value === undefined) {
+        delete process.env[name];
+      } else {
+        process.env[name] = value;
+      }
+    }
   });
 
   // --- Unit tests ---
@@ -112,5 +138,67 @@ describe('parseEnabledProviders()', () => {
       ),
       { numRuns: 100 }
     );
+  });
+
+  describe('resolveEnabledProviders()', () => {
+    it('main deployment local with empty providers → disables providers without exiting', async () => {
+      process.env.ENABLED_PROVIDERS = '';
+      mockedRequestMainBusinessApiGet.mockResolvedValue({
+        response: {
+          data: {
+            deploymentMode: 'local',
+            storageDriver: 'local',
+            features: { ai3dGenerator: false },
+          },
+        },
+        target: 'http://api/v1/system/deployment',
+      } as never);
+
+      await expect(resolveEnabledProviders()).resolves.toEqual([]);
+      expect(mockExit).not.toHaveBeenCalled();
+    });
+
+    it('main deployment local → disables providers even when ENABLED_PROVIDERS is configured', async () => {
+      process.env.ENABLED_PROVIDERS = 'tripo3d,hyper3d';
+      mockedRequestMainBusinessApiGet.mockResolvedValue({
+        response: {
+          data: {
+            deploymentMode: 'local',
+            storageDriver: 'local',
+            features: { ai3dGenerator: false },
+          },
+        },
+        target: 'http://api/v1/system/deployment',
+      } as never);
+
+      await expect(resolveEnabledProviders()).resolves.toEqual([]);
+      expect(mockExit).not.toHaveBeenCalled();
+    });
+
+    it('main deployment cloud with empty providers → keeps existing fatal validation', async () => {
+      process.env.ENABLED_PROVIDERS = '';
+      mockedRequestMainBusinessApiGet.mockResolvedValue({
+        response: {
+          data: {
+            deploymentMode: 'cloud',
+            storageDriver: 'cos',
+            features: { ai3dGenerator: true },
+          },
+        },
+        target: 'http://api/v1/system/deployment',
+      } as never);
+
+      await expect(resolveEnabledProviders()).rejects.toThrow('process.exit(1)');
+      expect(mockExit).toHaveBeenCalledWith(1);
+    });
+
+    it('main deployment config failure with local env → disables providers', async () => {
+      process.env.ENABLED_PROVIDERS = '';
+      process.env.DEPLOYMENT_MODE = 'local';
+      mockedRequestMainBusinessApiGet.mockRejectedValue(new Error('main api unavailable'));
+
+      await expect(resolveEnabledProviders()).resolves.toEqual([]);
+      expect(mockExit).not.toHaveBeenCalled();
+    });
   });
 });

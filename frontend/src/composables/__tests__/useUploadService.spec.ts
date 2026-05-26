@@ -7,6 +7,7 @@ const mocks = vi.hoisted(() => ({
   fetchThumbnailBlob: vi.fn(),
   getCloudConfig: vi.fn(),
   getCosPublicToken: vi.fn(),
+  getDeploymentConfig: vi.fn(),
   uploadLocalFile: vi.fn(),
   updateTaskResource: vi.fn(),
   authParams: null as
@@ -28,6 +29,7 @@ vi.mock('../../api', () => ({
   fetchThumbnailBlob: mocks.fetchThumbnailBlob,
   getCloudConfig: mocks.getCloudConfig,
   getCosPublicToken: mocks.getCosPublicToken,
+  getDeploymentConfig: mocks.getDeploymentConfig,
   uploadLocalFile: mocks.uploadLocalFile,
   updateTaskResource: mocks.updateTaskResource,
 }))
@@ -69,6 +71,7 @@ describe('useUploadService', () => {
     mocks.fetchThumbnailBlob.mockReset()
     mocks.getCloudConfig.mockReset()
     mocks.getCosPublicToken.mockReset()
+    mocks.getDeploymentConfig.mockReset()
     mocks.uploadLocalFile.mockReset()
     mocks.updateTaskResource.mockReset()
     mocks.authParams = null
@@ -84,6 +87,12 @@ describe('useUploadService', () => {
       data: {
         public: { bucket: 'public-bucket-123456', region: 'ap-nanjing' },
         private: { bucket: 'private-bucket-123456', region: 'ap-guangzhou' },
+      },
+    })
+    mocks.getDeploymentConfig.mockResolvedValue({
+      data: {
+        deploymentMode: 'cloud',
+        storageDriver: 'cos',
       },
     })
     mocks.getCosPublicToken.mockResolvedValue({
@@ -204,11 +213,12 @@ describe('useUploadService', () => {
     })
   })
 
-  it('uses the main backend local upload endpoint when cloud config is local', async () => {
-    mocks.getCloudConfig.mockResolvedValueOnce({
+  it('uses the main backend local upload endpoint when deployment config is local', async () => {
+    mocks.getDeploymentConfig.mockResolvedValueOnce({
       data: {
-        driver: 'local',
-        public: { bucket: 'store', baseUrl: '/storage' },
+        deploymentMode: 'local',
+        storageDriver: 'local',
+        storage: { publicBucket: 'store', publicBaseUrl: '/storage' },
       },
     })
     mocks.uploadLocalFile
@@ -240,6 +250,7 @@ describe('useUploadService', () => {
     const { uploadToMain } = useUploadService()
     await uploadToMain('task-123', 'demo prompt', vi.fn())
 
+    expect(mocks.getCloudConfig).not.toHaveBeenCalled()
     expect(mocks.getCosPublicToken).not.toHaveBeenCalled()
     expect(mocks.uploadCalls).toHaveLength(0)
     expect(mocks.uploadLocalFile).toHaveBeenCalledTimes(2)
@@ -261,5 +272,20 @@ describe('useUploadService', () => {
       key: 'ai-3d-generator-v3/task-123-thumbnail.webp',
       url: '/storage/store/ai-3d-generator-v3/task-123-thumbnail.webp',
     })
+  })
+
+  it('stops before COS token requests when deployment config cannot be loaded', async () => {
+    mocks.getDeploymentConfig.mockRejectedValueOnce(new Error('deployment unavailable'))
+
+    const { useUploadService } = await import('../useUploadService')
+
+    const { uploadToMain } = useUploadService()
+    await expect(uploadToMain('task-123', 'demo prompt', vi.fn())).rejects.toThrow(
+      'deployment unavailable'
+    )
+
+    expect(mocks.getCloudConfig).not.toHaveBeenCalled()
+    expect(mocks.getCosPublicToken).not.toHaveBeenCalled()
+    expect(mocks.uploadLocalFile).not.toHaveBeenCalled()
   })
 })

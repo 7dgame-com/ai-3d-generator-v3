@@ -12,7 +12,7 @@ import { testConnection } from './db/connection';
 import { ensureSchemaReady } from './db/schemaHealth';
 import { startPoller } from './services/taskPoller';
 import { startTimeoutGuardian, stopTimeoutGuardian } from './services/timeoutGuardian';
-import { parseEnabledProviders } from './config/providers';
+import { resolveEnabledProviders } from './config/providers';
 import { assertRuntimeConfig, validateRuntimeConfig } from './config/runtime';
 import { providerRegistry } from './adapters/ProviderRegistry';
 import { Tripo3DAdapter } from './adapters/Tripo3DAdapter';
@@ -135,7 +135,7 @@ async function bootstrap(): Promise<void> {
   });
 
   // ========== 注册启用的 Provider 适配器 ==========
-  const enabledProviders = parseEnabledProviders();
+  const enabledProviders = await resolveEnabledProviders();
   const adapterMap: Record<string, typeof hyper3dAdapter | Tripo3DAdapter> = {
     tripo3d: new Tripo3DAdapter(getTripoRegion),
     hyper3d: hyper3dAdapter,

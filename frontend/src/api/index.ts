@@ -274,6 +274,18 @@ export interface MainCloudConfig {
   region?: string
 }
 
+export interface MainDeploymentConfig {
+  deploymentMode?: string
+  storageDriver?: string
+  storage?: {
+    publicBaseUrl?: string
+    publicBucket?: string
+    privateBucket?: string
+    tempBucket?: string
+  }
+  features?: Record<string, boolean | undefined>
+}
+
 export interface CosTokenResponse {
   Credentials?: {
     TmpSecretId: string
@@ -410,6 +422,7 @@ export const getUsageHistory = (params?: {
 
 export const verifyToken = () => mainApi.get('/v1/plugin/verify-token')
 
+export const getDeploymentConfig = () => mainApi.get<MainDeploymentConfig>('/v1/system/deployment')
 export const getCloudConfig = () => mainApi.get<MainCloudConfig>('/v1/tencent-cloud/cloud')
 export const getCosPublicToken = () =>
   mainApi.get<CosTokenResponse>('/v1/tencent-cloud/public-token', { params: {} })
