@@ -332,6 +332,27 @@ export async function registerTask(req: Request, res: Response): Promise<void> {
   }
 }
 
+export async function cancelPreparedTask(req: Request, res: Response): Promise<void> {
+  const userId = (req as AuthenticatedRequest).user.userId;
+  const tokenPayload = resolveVerifiedPrepareToken(req, res);
+  if (!tokenPayload) {
+    return;
+  }
+
+  if (!isTaskOwner(tokenPayload.userId, userId)) {
+    res.status(403).json({ code: 'TASK_OWNER_MISMATCH', message: '没有权限操作该任务' });
+    return;
+  }
+
+  try {
+    await activeQuotaTool.refund(userId, tokenPayload.providerId, tokenPayload.tempTaskId);
+    res.status(200).json({ success: true });
+  } catch (error) {
+    console.error('[DirectTaskController] 取消预扣失败:', error);
+    res.status(500).json({ code: 5001, message: '服务器内部错误' });
+  }
+}
+
 export async function completeTask(req: Request, res: Response): Promise<void> {
   const userId = (req as AuthenticatedRequest).user.userId;
   const tokenPayload = resolveVerifiedPrepareToken(req, res);
