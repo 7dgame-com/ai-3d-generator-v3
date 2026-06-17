@@ -1,4 +1,5 @@
 import axios from 'axios';
+import dns from 'node:dns/promises';
 import type { Response } from 'express';
 import { downloadFile } from '../controllers/download';
 
@@ -6,6 +7,12 @@ const mockQuery = jest.fn();
 const mockIsDownloadExpired = jest.fn();
 
 jest.mock('axios');
+jest.mock('node:dns/promises', () => ({
+  __esModule: true,
+  default: {
+    lookup: jest.fn(),
+  },
+}));
 jest.mock('../db/connection', () => ({
   query: (...args: unknown[]) => mockQuery(...args),
 }));
@@ -14,6 +21,7 @@ jest.mock('../utils/urlExpiry', () => ({
 }));
 
 const mockedAxios = axios as jest.Mocked<typeof axios>;
+const mockedLookup = dns.lookup as unknown as jest.Mock;
 
 function createResponse() {
   return {
@@ -26,6 +34,7 @@ function createResponse() {
 describe('download controller provider proxy', () => {
   beforeEach(() => {
     jest.clearAllMocks();
+    mockedLookup.mockReset();
   });
 
   it('proxies provider downloads with IPv4-only stream agents', async () => {
@@ -40,6 +49,7 @@ describe('download controller provider proxy', () => {
       },
     ]);
     mockIsDownloadExpired.mockReturnValue(false);
+    mockedLookup.mockResolvedValueOnce([{ address: '93.184.216.34', family: 4 }]);
     mockedAxios.get.mockResolvedValueOnce({
       data: { pipe },
       headers: {
@@ -62,6 +72,7 @@ describe('download controller provider proxy', () => {
       httpAgent: expect.anything(),
       httpsAgent: expect.anything(),
       proxy: false,
+      maxRedirects: 0,
     });
     expect((res.setHeader as jest.Mock)).toHaveBeenCalledWith(
       'Content-Disposition',
