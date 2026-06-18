@@ -10,6 +10,8 @@
 
 import { Response } from 'express';
 import axios from 'axios';
+import dns from 'node:dns/promises';
+import net from 'node:net';
 import { query } from '../db/connection';
 import { AuthenticatedRequest } from '../middleware/auth';
 import { isDownloadExpired } from '../utils/urlExpiry';
@@ -24,6 +26,61 @@ interface TaskRow {
   provider_id: string;
   output_url: string | null;
   completed_at: string | null;
+}
+
+function isPrivateIPv4(ip: string): boolean {
+  const [a, b] = ip.split('.').map((p) => Number(p));
+  if (Number.isNaN(a) || Number.isNaN(b)) return true;
+  return (
+    a === 10 ||
+    a === 127 ||
+    a === 0 ||
+    (a === 169 && b === 254) ||
+    (a === 172 && b >= 16 && b <= 31) ||
+    (a === 192 && b === 168)
+  );
+}
+
+function isPrivateIPv6(ip: string): boolean {
+  const normalized = ip.toLowerCase();
+  return normalized === '::1' || normalized.startsWith('fc') || normalized.startsWith('fd') || normalized.startsWith('fe80:');
+}
+
+export async function isSafeDownloadUrl(rawUrl: string): Promise<boolean> {
+  let parsed: URL;
+  try {
+    parsed = new URL(rawUrl);
+  } catch {
+    return false;
+  }
+
+  if (parsed.protocol !== 'https:') {
+    return false;
+  }
+
+  if (!parsed.hostname) {
+    return false;
+  }
+
+  if (net.isIP(parsed.hostname)) {
+    if (parsed.hostname.includes(':')) {
+      return !isPrivateIPv6(parsed.hostname);
+    }
+    return !isPrivateIPv4(parsed.hostname);
+  }
+
+  try {
+    const records = await dns.lookup(parsed.hostname, { all: true });
+    if (records.length === 0) {
+      return false;
+    }
+    return records.every((record) => {
+      if (record.family === 6) return !isPrivateIPv6(record.address);
+      return !isPrivateIPv4(record.address);
+    });
+  } catch {
+    return false;
+  }
 }
 
 /**
@@ -75,8 +132,16 @@ export async function downloadFile(req: AuthenticatedRequest, res: Response): Pr
     return;
   }
 
+  if (!(await isSafeDownloadUrl(task.output_url))) {
+    res.status(400).json({ code: 'INVALID_OUTPUT_URL', message: '输出文件地址不安全或不可用' });
+    return;
+  }
+
   try {
-    const upstream = await axios.get(task.output_url, createProviderStreamRequestConfig());
+    const upstream = await axios.get(task.output_url, {
+      ...createProviderStreamRequestConfig(),
+      maxRedirects: 0,
+    });
 
     res.setHeader('Content-Disposition', `attachment; filename="${task.task_id}.${format}"`);
     res.setHeader('Content-Type', 'application/octet-stream');
