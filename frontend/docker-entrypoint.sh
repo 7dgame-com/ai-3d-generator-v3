@@ -10,6 +10,8 @@ set -e
 #   APP_API_1_WEIGHT=60                        （可选，默认平均分配）
 #   APP_API_2_URL=https://api-backup.example.com
 #   APP_API_2_WEIGHT=40
+#   APP_AUTH_1_URL=https://identity.xrteeth.com
+#   APP_AUTH_2_URL=https://identity.tmrpp.com
 #   APP_BACKEND_1_URL=http://plugin-backend:8089
 #   APP_BACKEND_1_WEIGHT=100                   （可选）
 #   APP_RESOLVER=127.0.0.11 8.8.8.8           （可选，DNS 解析服务器）
@@ -17,6 +19,7 @@ set -e
 # 生成负载均衡 + failover：
 #   split_clients 按权重分流 → map 映射后端 URL/Host
 #   /api/        → 加权分流到 APP_API_N → failover 到环形下一个
+#   /api-auth/   → 加权分流到 APP_AUTH_N → failover 到环形下一个
 #   /backend/    → 加权分流到 APP_BACKEND_N → failover 到环形下一个
 # ============================================================
 
@@ -254,6 +257,9 @@ map \$${PREFIX_NAME}_pool \$${PREFIX_NAME}_fb_host {"
 generate_lb_config "APP_API" "/api/" "api"
 API_LOCATIONS="$CHAIN_RESULT"
 
+generate_lb_config "APP_AUTH" "/api-auth/" "auth"
+AUTH_LOCATIONS="$CHAIN_RESULT"
+
 generate_lb_config "APP_BACKEND" "/backend/" "backend"
 BACKEND_LOCATIONS="$CHAIN_RESULT"
 
@@ -285,7 +291,7 @@ inject_locations() {
 
 inject_locations "# __RESOLVER__" "$RESOLVER_BLOCK"
 inject_locations "# __LB_HTTP_BLOCK__" "$LB_HTTP_BLOCK"
-inject_locations "# __API_LOCATIONS__" "$API_LOCATIONS"
+inject_locations "# __API_LOCATIONS__" "${API_LOCATIONS}${AUTH_LOCATIONS}"
 inject_locations "# __BACKEND_LOCATIONS__" "$BACKEND_LOCATIONS"
 
 echo "[entrypoint] Nginx config generated at $OUTPUT"
@@ -300,6 +306,16 @@ while true; do
   i=$((i + 1))
 done
 
+AUTH_LIST=""
+i=1
+while true; do
+  eval "url=\${APP_AUTH_${i}_URL}"
+  [ -z "$url" ] && break
+  [ -n "$AUTH_LIST" ] && AUTH_LIST="${AUTH_LIST}, "
+  AUTH_LIST="${AUTH_LIST}\"APP_AUTH_${i}_URL\": \"${url}\""
+  i=$((i + 1))
+done
+
 BACKEND_LIST=""
 i=1
 while true; do
@@ -310,7 +326,7 @@ while true; do
   i=$((i + 1))
 done
 
-DEBUG_LIST="${API_LIST}${API_LIST:+, }${BACKEND_LIST}"
+DEBUG_LIST="${API_LIST}${API_LIST:+, }${AUTH_LIST}${AUTH_LIST:+, }${BACKEND_LIST}"
 cat > /usr/share/nginx/html/debug-env.json <<EOF
 {
   ${DEBUG_LIST}${DEBUG_LIST:+, }
