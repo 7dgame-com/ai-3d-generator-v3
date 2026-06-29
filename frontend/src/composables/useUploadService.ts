@@ -17,6 +17,7 @@ import {
   uploadLocalFile,
   updateTaskResource,
 } from '../api'
+import { buildPolygenResourceInfoJson } from '../utils/polygenResourceInfo'
 
 function resolvePublicCloudConfig(cloudData: MainCloudConfig): Required<Pick<CloudBucketConfig, 'bucket' | 'region'>> {
   if (cloudData.public?.bucket && cloudData.public.region) {
@@ -268,6 +269,7 @@ export function useUploadService() {
       ])
       const objectKey = `ai-3d-generator-v3/${taskId}.glb`
       const deploymentCloudData = deploymentToCloudConfig(deploymentData)
+      const resourceInfo = buildPolygenResourceInfoJson(modelBuffer)
 
       if (isLocalCloudConfig(deploymentCloudData)) {
         const localConfig = resolveLocalConfig(deploymentCloudData)
@@ -294,6 +296,7 @@ export function useUploadService() {
           name: (prompt || taskId).slice(0, 50),
           file_id: fileRecord.data.id,
           ...(thumbnailFileId ? { image_id: thumbnailFileId } : {}),
+          info: resourceInfo,
           type: 'polygen',
         })
 
@@ -347,6 +350,7 @@ export function useUploadService() {
         name: (prompt || taskId).slice(0, 50),
         file_id: fileRecord.data.id,
         ...(thumbnailFileId ? { image_id: thumbnailFileId } : {}),
+        info: resourceInfo,
         type: 'polygen',
       })
 

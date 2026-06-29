@@ -61,6 +61,13 @@ vi.mock('cos-js-sdk-v5', () => ({
   })),
 }))
 
+const defaultPolygenInfo = JSON.stringify({
+  size: { x: 1, y: 1, z: 1 },
+  center: { x: 0, y: 0, z: 0 },
+  anim: [],
+  faces: 0,
+})
+
 describe('useUploadService', () => {
   beforeEach(() => {
     vi.resetModules()
@@ -166,6 +173,7 @@ describe('useUploadService', () => {
       name: 'demo prompt',
       file_id: 11,
       image_id: 12,
+      info: defaultPolygenInfo,
       type: 'polygen',
     })
     expect(mocks.updateTaskResource).toHaveBeenCalledWith('task-123', 22)
@@ -188,6 +196,7 @@ describe('useUploadService', () => {
     expect(mocks.createResourceRecord).toHaveBeenCalledWith({
       name: 'demo prompt',
       file_id: 11,
+      info: defaultPolygenInfo,
       type: 'polygen',
     })
   })
