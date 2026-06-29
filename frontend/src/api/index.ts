@@ -453,5 +453,6 @@ export const createResourceRecord = (payload: {
   name: string
   file_id: number
   image_id?: number
+  info?: string
   type: string
 }) => mainApi.post<{ id: number }>('/v1/resources', payload)
