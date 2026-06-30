@@ -16,7 +16,7 @@
       </div>
     </section>
 
-    <section class="panel">
+    <section v-if="isRootUser" class="panel">
       <div class="panel-head">
         <div>
           <h3>{{ t('admin.providerOpsTitle') }}</h3>
@@ -92,7 +92,7 @@
       </div>
 
       <div class="quota-config">
-        <div class="quota-limit-control">
+        <div v-if="isRootUser" class="quota-limit-control">
           <span>{{ t('admin.defaultQuotaLimit') }}</span>
           <el-input-number
             v-model="quotaLimitDraft"
@@ -103,6 +103,10 @@
           <el-button type="primary" :loading="limitSaving" @click="saveDefaultLimit">
             {{ t('common.save') }}
           </el-button>
+        </div>
+        <div v-else class="quota-scope-badge">
+          <span>{{ t('admin.organizationQuotaScope') }}</span>
+          <strong>{{ quotaScopeLabel }}</strong>
         </div>
         <div class="quota-summary-strip">
           <article class="quota-kpi">
@@ -156,6 +160,21 @@
         <el-table-column :label="t('admin.updatedAt')" width="190">
           <template #default="{ row }">{{ formatDateTime(row.quota?.updated_at ?? null) }}</template>
         </el-table-column>
+        <el-table-column :label="t('admin.actions')" width="160">
+          <template #default="{ row }">
+            <el-button
+              v-if="canResetSingleUser(row)"
+              size="small"
+              type="danger"
+              plain
+              :loading="resetUserLoadingId === row.id"
+              @click="resetSingleUserUsage(row)"
+            >
+              {{ t('admin.resetSingleUserUsage') }}
+            </el-button>
+            <span v-else class="muted-action">-</span>
+          </template>
+        </el-table-column>
       </el-table>
 
       <el-pagination
@@ -170,7 +189,7 @@
       />
     </section>
 
-    <section class="panel">
+    <section v-if="isRootUser" class="panel">
       <div class="panel-head">
         <div>
           <h3>{{ t('admin.usageTitle') }}</h3>
@@ -221,13 +240,16 @@ import {
   getQuotaSummary,
   getUserQuotas,
   resetQuotaUsage,
+  resetUserQuotaUsage,
   saveAdminConfig,
   updateDefaultQuotaLimit,
   type Pagination,
+  type QuotaOrganizationParams,
   type QuotaSummary,
   type UserQuotaItem,
 } from '../api'
 import { useI18n } from 'vue-i18n'
+import { usePermissions } from '../composables/usePermissions'
 
 interface AdminUsageSnapshot {
   totalCredits: number
@@ -237,6 +259,12 @@ interface AdminUsageSnapshot {
 }
 
 const { t, locale } = useI18n()
+const {
+  isRootUser,
+  currentOrganizationId,
+  currentOrganizationName,
+  currentOrganizationTitle,
+} = usePermissions()
 const providers = ref<string[]>([])
 const configs = reactive<Record<string, { configured: boolean; apiKeyMasked?: string; region?: 'ai' | 'com' }>>({})
 const balances = reactive<Record<string, { available?: number; availablePower?: number; configured?: boolean } | undefined>>({})
@@ -252,6 +280,7 @@ const providerLoading = ref(false)
 const quotaLoading = ref(false)
 const limitSaving = ref(false)
 const resetLoading = ref(false)
+const resetUserLoadingId = ref<number | null>(null)
 const userQuotaLoading = ref(false)
 
 const providerConsoleTotalPower = computed(() =>
@@ -267,38 +296,70 @@ const maxTrendPower = computed(() =>
 )
 const rankedUsers = computed(() => adminUsage.value?.userRanking ?? [])
 const trendRows = computed(() => adminUsage.value?.dailyTrend ?? [])
-const summaryCards = computed(() => [
-  {
-    key: 'provider',
-    label: t('admin.providerTotalPower'),
-    value: formatPower(providerConsoleTotalPower.value),
-    meta: t('admin.providerTotalPowerMeta'),
-    tone: 'blue',
-  },
-  {
-    key: 'limit',
-    label: t('admin.defaultQuotaLimit'),
-    value: formatPower(quotaLimit.value),
-    meta: t('admin.defaultQuotaLimitMeta'),
-    tone: 'green',
-  },
-  {
-    key: 'used',
-    label: t('admin.totalUsedPower'),
-    value: formatPower(quotaSummary.value?.total_used_power ?? 0),
-    meta: t('admin.usedUserCountMeta', { count: quotaSummary.value?.used_user_count ?? 0 }),
-    tone: 'orange',
-  },
-  {
-    key: 'usage',
-    label: t('admin.usageTitle'),
-    value: formatPower(adminUsage.value?.totalPower ?? 0),
-    meta: t('admin.usageTotalMeta'),
-    tone: 'purple',
-  },
-])
+const quotaScopeParams = computed<QuotaOrganizationParams>(() => {
+  const params: QuotaOrganizationParams = {}
+  if (currentOrganizationId.value !== null) {
+    params.organization_id = currentOrganizationId.value
+  } else if (currentOrganizationName.value) {
+    params.organization_name = currentOrganizationName.value
+  }
+  return params
+})
+const quotaScopeLabel = computed(() =>
+  currentOrganizationTitle.value
+    || currentOrganizationName.value
+    || t('admin.rootGlobalQuotaScope')
+)
+const summaryCards = computed(() => {
+  const cards = [
+    {
+      key: 'limit',
+      label: t('admin.defaultQuotaLimit'),
+      value: formatPower(quotaLimit.value),
+      meta: t('admin.defaultQuotaLimitMeta'),
+      tone: 'green',
+    },
+    {
+      key: 'used',
+      label: t('admin.totalUsedPower'),
+      value: formatPower(quotaSummary.value?.total_used_power ?? 0),
+      meta: t('admin.usedUserCountMeta', { count: quotaSummary.value?.used_user_count ?? 0 }),
+      tone: 'orange',
+    },
+  ]
+
+  if (!isRootUser.value) {
+    return cards
+  }
+
+  return [
+    {
+      key: 'provider',
+      label: t('admin.providerTotalPower'),
+      value: formatPower(providerConsoleTotalPower.value),
+      meta: t('admin.providerTotalPowerMeta'),
+      tone: 'blue',
+    },
+    ...cards,
+    {
+      key: 'usage',
+      label: t('admin.usageTitle'),
+      value: formatPower(adminUsage.value?.totalPower ?? 0),
+      meta: t('admin.usageTotalMeta'),
+      tone: 'purple',
+    },
+  ]
+})
+
+function quotaRequestParams(): QuotaOrganizationParams {
+  return { ...quotaScopeParams.value }
+}
 
 async function loadProviderData() {
+  if (!isRootUser.value) {
+    return
+  }
+
   providerLoading.value = true
   try {
     const providerResponse = await getEnabledProviders()
@@ -354,13 +415,15 @@ async function save(provider: string) {
 async function loadQuotaData() {
   quotaLoading.value = true
   try {
-    const [summaryResponse, usageResponse] = await Promise.all([
-      getQuotaSummary(),
-      getAdminUsage(),
-    ])
+    const summaryResponse = await getQuotaSummary(quotaRequestParams())
     quotaSummary.value = summaryResponse.data.data
     quotaLimitDraft.value = quotaSummary.value.quota_limit
-    adminUsage.value = usageResponse.data
+    if (isRootUser.value) {
+      const usageResponse = await getAdminUsage()
+      adminUsage.value = usageResponse.data
+    } else {
+      adminUsage.value = null
+    }
   } catch (error) {
     ElMessage.error(error instanceof Error ? error.message : t('admin.queryFailed'))
   } finally {
@@ -369,6 +432,10 @@ async function loadQuotaData() {
 }
 
 async function saveDefaultLimit() {
+  if (!isRootUser.value) {
+    return
+  }
+
   limitSaving.value = true
   try {
     const response = await updateDefaultQuotaLimit(quotaLimitDraft.value)
@@ -400,7 +467,7 @@ async function resetAllUsage() {
 
   resetLoading.value = true
   try {
-    const response = await resetQuotaUsage()
+    const response = await resetQuotaUsage(quotaRequestParams())
     quotaSummary.value = response.data.data.summary
     quotaLimitDraft.value = quotaSummary.value.quota_limit
     ElMessage.success(t('admin.resetUsageSuccess', {
@@ -412,6 +479,46 @@ async function resetAllUsage() {
     ElMessage.error(error instanceof Error ? error.message : t('admin.resetUsageFailed'))
   } finally {
     resetLoading.value = false
+  }
+}
+
+function canResetSingleUser(row: UserQuotaItem) {
+  const roles = row.roles ?? []
+  return roles.includes('user')
+    && !roles.some((role) => role === 'root' || role === 'admin' || role === 'manager')
+}
+
+async function resetSingleUserUsage(row: UserQuotaItem) {
+  try {
+    await ElMessageBox.confirm(
+      t('admin.resetSingleUserConfirmMessage', {
+        user: row.nickname || row.username || `#${row.id}`,
+      }),
+      t('admin.resetUsageConfirmTitle'),
+      {
+        confirmButtonText: t('admin.resetSingleUserUsage'),
+        cancelButtonText: t('common.cancel'),
+        type: 'warning',
+      }
+    )
+  } catch {
+    return
+  }
+
+  resetUserLoadingId.value = row.id
+  try {
+    const response = await resetUserQuotaUsage(row.id, quotaRequestParams())
+    quotaSummary.value = response.data.data.summary
+    quotaLimitDraft.value = quotaSummary.value.quota_limit
+    ElMessage.success(t('admin.resetSingleUserSuccess', {
+      user: row.nickname || row.username || `#${row.id}`,
+      power: response.data.data.clearedPower,
+    }))
+    await loadUserQuotas(userQuotaPagination.value.page)
+  } catch (error) {
+    ElMessage.error(error instanceof Error ? error.message : t('admin.resetUsageFailed'))
+  } finally {
+    resetUserLoadingId.value = null
   }
 }
 
@@ -430,6 +537,7 @@ async function loadUserQuotas(page = 1) {
       search: userSearch.value.trim() || undefined,
       page,
       pageSize: userQuotaPagination.value.pageSize,
+      ...quotaRequestParams(),
     })
     userQuotas.value = response.data.data
     userQuotaPagination.value = response.data.pagination
@@ -475,11 +583,14 @@ function trendBarStyle(value: number, maxValue: number) {
 }
 
 onMounted(async () => {
-  await Promise.all([
-    loadProviderData(),
+  const tasks = [
     loadQuotaData(),
     loadUserQuotas(),
-  ])
+  ]
+  if (isRootUser.value) {
+    tasks.push(loadProviderData())
+  }
+  await Promise.all(tasks)
 })
 </script>
 
@@ -701,8 +812,23 @@ h3 {
   background: #fbfcfe;
 }
 
-.quota-limit-control span {
+.quota-scope-badge {
+  display: grid;
+  gap: 6px;
+  align-content: center;
+  border: 1px solid #dce4ef;
+  border-radius: 8px;
+  padding: 14px;
+  background: #fbfcfe;
+}
+
+.quota-limit-control span,
+.quota-scope-badge span {
   font-weight: 700;
+}
+
+.quota-scope-badge strong {
+  color: #3f63d7;
 }
 
 .user-quota-toolbar {
@@ -720,6 +846,10 @@ h3 {
 .user-cell {
   display: grid;
   gap: 2px;
+}
+
+.muted-action {
+  color: #9aa5b5;
 }
 
 .pagination {

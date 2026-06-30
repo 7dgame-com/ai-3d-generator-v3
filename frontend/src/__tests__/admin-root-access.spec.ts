@@ -2,16 +2,17 @@ import fs from 'node:fs'
 import path from 'node:path'
 import { describe, expect, it } from 'vitest'
 
-describe('admin root-only wiring', () => {
-  it('marks the admin route as root-only in the router guard', () => {
+describe('admin quota access wiring', () => {
+  it('marks the admin route as quota-admin in the router guard', () => {
     const source = fs.readFileSync(path.resolve(__dirname, '../router/index.ts'), 'utf8')
 
     expect(source).toContain("path: '/api-diagnostics'")
     expect(source).toContain("name: 'ApiDiagnostics'")
     expect(source).toContain("meta: { public: true, title: 'API Diagnostics' }")
-    expect(source).toContain('requiresRoot: true')
-    expect(source).toContain('to.meta.requiresRoot')
-    expect(source).toContain('fetchSession')
+    expect(source).toContain('requiresQuotaAdmin: true')
+    expect(source).toContain('to.meta.requiresQuotaAdmin')
+    expect(source).toContain('fetchAllowedActions')
+    expect(source).toContain("can('manage-quota')")
     expect(source).not.toContain('requiresPermission')
     expect(source).toContain("return '/no-permission'")
   })
@@ -29,12 +30,11 @@ describe('admin root-only wiring', () => {
     expect(source).toContain('502 || resp.status === 503 || resp.status === 504')
   })
 
-  it('shows navigation using auth-only history and root-only admin rules', () => {
+  it('shows navigation using auth-only history and quota-admin rules', () => {
     const source = fs.readFileSync(path.resolve(__dirname, '../layout/AppLayout.vue'), 'utf8')
 
     expect(source).toContain('<router-link to="/history">')
-    expect(source).toContain('v-if="isRootUser"')
-    expect(source).not.toContain("can('admin-config')")
+    expect(source).toContain("v-if=\"can('manage-quota')\"")
     expect(source).not.toContain("can('view-usage')")
   })
 

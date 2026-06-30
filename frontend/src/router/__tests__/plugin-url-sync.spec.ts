@@ -4,10 +4,10 @@ vi.mock('../../utils/token', () => ({
   isInIframe: () => true,
 }))
 
-vi.mock('../../composables/useAuthSession', () => ({
-  useAuthSession: () => ({
-    fetchSession: vi.fn(),
-    isRootUser: { value: true },
+vi.mock('../../composables/usePermissions', () => ({
+  usePermissions: () => ({
+    fetchAllowedActions: vi.fn(),
+    can: (action: string) => action === 'manage-quota',
   }),
 }))
 

@@ -19,10 +19,22 @@ export interface QuotaSummary {
   total_remaining_power: number;
 }
 
+export interface QuotaOrganizationSummary {
+  id?: number;
+  name?: string;
+  title?: string;
+}
+
+export interface QuotaOrganizationScope {
+  id?: number;
+  name?: string;
+}
+
 export interface QuotaUsageListParams {
   page: number;
   pageSize: number;
   search?: string;
+  organization?: QuotaOrganizationScope | null;
 }
 
 export interface QuotaUsageListResult {
@@ -55,6 +67,7 @@ export interface QuotaUserSnapshot {
   email?: string | null;
   status?: number;
   roles?: string[];
+  organizations?: QuotaOrganizationSummary[];
   captured_at?: string;
 }
 
@@ -63,8 +76,16 @@ export interface QuotaTool {
 
   getDefaultLimit(): Promise<number>;
   setDefaultLimit(limit: number): Promise<void>;
-  getSummary(): Promise<QuotaSummary>;
-  resetAllUsage(note?: string): Promise<{ affectedUsers: number; clearedPower: number }>;
+  getSummary(organization?: QuotaOrganizationScope | null): Promise<QuotaSummary>;
+  resetAllUsage(note?: string, organization?: QuotaOrganizationScope | null): Promise<{ affectedUsers: number; clearedPower: number }>;
+  resetUserUsage(
+    userId: number,
+    note?: string,
+    options?: {
+      organization?: QuotaOrganizationScope | null;
+      requireLearnerRole?: boolean;
+    }
+  ): Promise<{ affectedUsers: number; clearedPower: number }>;
 
   getUserStatus(userId: number): Promise<QuotaStatus>;
   getUserStatuses(userIds: number[]): Promise<Map<number, QuotaStatus>>;
