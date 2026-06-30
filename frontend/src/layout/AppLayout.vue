@@ -8,7 +8,7 @@
       <nav class="nav">
         <router-link to="/">{{ t('nav.generator') }}</router-link>
         <router-link to="/history">{{ t('nav.history') }}</router-link>
-        <router-link v-if="isRootUser" to="/admin">{{ t('nav.admin') }}</router-link>
+        <router-link v-if="can('manage-quota')" to="/admin">{{ t('nav.admin') }}</router-link>
       </nav>
     </header>
     <main class="content">
@@ -20,13 +20,13 @@
 <script setup lang="ts">
 import { onMounted } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { useAuthSession } from '../composables/useAuthSession'
+import { usePermissions } from '../composables/usePermissions'
 
 const { t } = useI18n()
-const { fetchSession, isRootUser } = useAuthSession()
+const { fetchAllowedActions, can } = usePermissions()
 
 onMounted(() => {
-  void fetchSession()
+  void fetchAllowedActions()
 })
 </script>
 

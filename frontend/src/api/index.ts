@@ -221,6 +221,11 @@ export interface QuotaStatus {
     email?: string | null
     status?: number
     roles?: string[]
+    organizations?: Array<{
+      id?: number
+      name?: string
+      title?: string
+    }>
     captured_at?: string
   } | null
 }
@@ -241,6 +246,11 @@ export interface UserQuotaItem {
   status?: number
   roles?: string[]
   quota: QuotaStatus | null
+}
+
+export interface QuotaOrganizationParams {
+  organization_id?: number
+  organization_name?: string
 }
 
 export interface Pagination {
@@ -378,25 +388,35 @@ export const getCreditStatus = (providerId?: string) =>
     params: providerId ? { provider_id: providerId } : undefined,
   })
 
-export const getQuotaSummary = () =>
-  backendApi.get<{ data: QuotaSummary }>('/admin/quota/summary')
+export const getQuotaSummary = (params?: QuotaOrganizationParams) => params
+  ? backendApi.get<{ data: QuotaSummary }>('/admin/quota/summary', { params })
+  : backendApi.get<{ data: QuotaSummary }>('/admin/quota/summary')
 
 export const updateDefaultQuotaLimit = (quotaLimit: number) =>
   backendApi.put<{ success: boolean; data: QuotaSummary }>('/admin/quota/default-limit', {
     quota_limit: quotaLimit,
   })
 
-export const resetQuotaUsage = (note?: string) =>
+export const resetQuotaUsage = (payload?: { note?: string } & QuotaOrganizationParams) =>
   backendApi.post<{
     success: boolean
     data: { affectedUsers: number; clearedPower: number; summary: QuotaSummary }
-  }>('/admin/quota/reset-usage', note ? { note } : {})
+  }>('/admin/quota/reset-usage', payload ?? {})
+
+export const resetUserQuotaUsage = (
+  userId: number,
+  payload?: { note?: string } & QuotaOrganizationParams
+) =>
+  backendApi.post<{
+    success: boolean
+    data: { affectedUsers: number; clearedPower: number; summary: QuotaSummary }
+  }>(`/admin/user-quotas/${userId}/reset`, payload ?? {})
 
 export const getUserQuotas = (params?: {
   search?: string
   page?: number
   pageSize?: number
-}) =>
+} & QuotaOrganizationParams) =>
   backendApi.get<{ data: UserQuotaItem[]; pagination: Pagination }>('/admin/user-quotas', {
     params,
   })

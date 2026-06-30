@@ -49,6 +49,8 @@ describe('locale packs', () => {
     expect(keys).toContain('admin.accountQuotaTitle')
     expect(keys).toContain('admin.defaultQuotaLimit')
     expect(keys).toContain('admin.resetAllUsage')
+    expect(keys).toContain('admin.resetSingleUserUsage')
+    expect(keys).toContain('admin.organizationQuotaScope')
     expect(keys).toContain('admin.userSearchPlaceholder')
     expect(keys).toContain('admin.hasQuotaRecord')
     expect(keys).toContain('admin.noQuotaRecord')

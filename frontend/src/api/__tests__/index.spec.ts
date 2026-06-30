@@ -128,16 +128,23 @@ describe('frontend api module', () => {
     mockBackendPost.mockResolvedValue({ data: { success: true } })
     mockBackendPut.mockResolvedValue({ data: { success: true } })
 
-    const { updateDefaultQuotaLimit, resetQuotaUsage, getUserQuotas } = await import('../index')
+    const {
+      updateDefaultQuotaLimit,
+      resetQuotaUsage,
+      resetUserQuotaUsage,
+      getUserQuotas,
+    } = await import('../index')
 
     await updateDefaultQuotaLimit(1200)
-    await resetQuotaUsage()
-    await getUserQuotas({ search: 'alice', page: 2, pageSize: 10 })
+    await resetQuotaUsage({ organization_id: 7 })
+    await resetUserQuotaUsage(42, { organization_id: 7 })
+    await getUserQuotas({ search: 'alice', page: 2, pageSize: 10, organization_id: 7 })
 
     expect(mockBackendPut).toHaveBeenCalledWith('/admin/quota/default-limit', { quota_limit: 1200 })
-    expect(mockBackendPost).toHaveBeenCalledWith('/admin/quota/reset-usage', {})
+    expect(mockBackendPost).toHaveBeenCalledWith('/admin/quota/reset-usage', { organization_id: 7 })
+    expect(mockBackendPost).toHaveBeenCalledWith('/admin/user-quotas/42/reset', { organization_id: 7 })
     expect(mockBackendGet).toHaveBeenCalledWith('/admin/user-quotas', {
-      params: { search: 'alice', page: 2, pageSize: 10 },
+      params: { search: 'alice', page: 2, pageSize: 10, organization_id: 7 },
     })
   })
 
