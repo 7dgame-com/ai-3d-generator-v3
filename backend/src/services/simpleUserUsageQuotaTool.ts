@@ -3,6 +3,8 @@ import { pool } from '../db/connection';
 import type {
   ConfirmDeductResult,
   QuotaReserveResult,
+  QuotaOrganizationScope,
+  QuotaOrganizationSummary,
   QuotaStatus,
   QuotaSummary,
   QuotaTool,
@@ -33,6 +35,26 @@ interface CountRow extends RowDataPacket {
 interface TaskRowForBilling extends RowDataPacket {
   status: string;
   error_message: string | null;
+}
+
+export class QuotaScopeMismatchError extends Error {
+  status = 403;
+  code = 'QUOTA_SCOPE_MISMATCH';
+
+  constructor(message = '目标账号不在当前组织或缺少组织快照') {
+    super(message);
+    this.name = 'QuotaScopeMismatchError';
+  }
+}
+
+export class QuotaTargetRoleNotAllowedError extends Error {
+  status = 422;
+  code = 'QUOTA_TARGET_ROLE_NOT_ALLOWED';
+
+  constructor(message = '只能重置普通学员账号') {
+    super(message);
+    this.name = 'QuotaTargetRoleNotAllowedError';
+  }
 }
 
 function toNumber(value: unknown): number {
@@ -74,6 +96,136 @@ function normalizeOptionalNullableString(value: unknown): string | null | undefi
   return normalizeOptionalString(value);
 }
 
+function normalizePositiveInteger(value: unknown): number | undefined {
+  const parsed = Number(value);
+  return Number.isInteger(parsed) && parsed > 0 ? parsed : undefined;
+}
+
+function normalizeComparableText(value: unknown): string {
+  return typeof value === 'string' ? value.trim().toLowerCase() : '';
+}
+
+function normalizeOrganizationScope(scope?: QuotaOrganizationScope | null): QuotaOrganizationScope | null {
+  if (!scope) {
+    return null;
+  }
+
+  const id = normalizePositiveInteger(scope.id);
+  const name = normalizeOptionalString(scope.name);
+  if (id === undefined && !name) {
+    return null;
+  }
+
+  return {
+    ...(id !== undefined ? { id } : {}),
+    ...(name ? { name } : {}),
+  };
+}
+
+function normalizeOrganizationSummary(value: unknown): QuotaOrganizationSummary | null {
+  if (!value || typeof value !== 'object') {
+    return null;
+  }
+
+  const raw = value as Record<string, unknown>;
+  const id = normalizePositiveInteger(raw.id);
+  const name = normalizeOptionalString(raw.name);
+  const title = normalizeOptionalString(raw.title);
+  if (id === undefined && !name && !title) {
+    return null;
+  }
+
+  return {
+    ...(id !== undefined ? { id } : {}),
+    ...(name ? { name } : {}),
+    ...(title ? { title } : {}),
+  };
+}
+
+function normalizeOrganizations(value: unknown): QuotaOrganizationSummary[] | undefined {
+  if (!Array.isArray(value)) {
+    return undefined;
+  }
+
+  const organizations = value
+    .map(normalizeOrganizationSummary)
+    .filter((organization): organization is QuotaOrganizationSummary => organization !== null);
+
+  return organizations.length > 0 ? organizations : undefined;
+}
+
+function organizationMatchesScope(
+  organization: QuotaOrganizationSummary,
+  scope: QuotaOrganizationScope
+): boolean {
+  const expectedId = normalizePositiveInteger(scope.id);
+  const actualId = normalizePositiveInteger(organization.id);
+  if (expectedId !== undefined && actualId === expectedId) {
+    return true;
+  }
+
+  const expectedName = normalizeComparableText(scope.name);
+  if (!expectedName) {
+    return false;
+  }
+
+  return normalizeComparableText(organization.name) === expectedName
+    || normalizeComparableText(organization.title) === expectedName;
+}
+
+function snapshotBelongsToOrganization(
+  snapshot: QuotaUserSnapshot | null,
+  scope: QuotaOrganizationScope | null
+): boolean {
+  if (!scope) {
+    return true;
+  }
+
+  return Array.isArray(snapshot?.organizations)
+    && snapshot.organizations.some((organization) => organizationMatchesScope(organization, scope));
+}
+
+function isLearnerSnapshot(snapshot: QuotaUserSnapshot | null): boolean {
+  const roles = Array.isArray(snapshot?.roles) ? snapshot.roles : [];
+  if (!roles.includes('user')) {
+    return false;
+  }
+
+  return !roles.some((role) => role === 'root' || role === 'admin' || role === 'manager');
+}
+
+function usageRowMatchesSearch(row: UsageRow, search: string): boolean {
+  if (!search) {
+    return true;
+  }
+
+  const snapshot = parseUserSnapshot(row.user_snapshot);
+  const fields = [
+    String(row.user_id),
+    snapshot?.username ?? '',
+    snapshot?.nickname ?? '',
+    snapshot?.email ?? '',
+  ];
+
+  return fields.some((field) => normalizeComparableText(field).includes(search));
+}
+
+function usageRowUpdatedAtMs(row: UsageRow): number {
+  const value = row.updated_at;
+  if (value instanceof Date) {
+    return value.getTime();
+  }
+  if (typeof value === 'string') {
+    const parsed = new Date(value).getTime();
+    return Number.isFinite(parsed) ? parsed : 0;
+  }
+  return 0;
+}
+
+function placeholders(values: unknown[]): string {
+  return values.map(() => '?').join(', ');
+}
+
 function normalizeUserSnapshot(userId: number, snapshot?: QuotaUserSnapshot): QuotaUserSnapshot | null {
   if (!snapshot) {
     return null;
@@ -102,6 +254,10 @@ function normalizeUserSnapshot(userId: number, snapshot?: QuotaUserSnapshot): Qu
   }
   if (Array.isArray(snapshot.roles)) {
     normalized.roles = snapshot.roles.filter((role): role is string => typeof role === 'string');
+  }
+  const organizations = normalizeOrganizations(snapshot.organizations);
+  if (organizations) {
+    normalized.organizations = organizations;
   }
 
   return normalized;
@@ -165,8 +321,23 @@ export class SimpleUserUsageQuotaTool implements QuotaTool {
     );
   }
 
-  async getSummary(): Promise<QuotaSummary> {
+  async getSummary(organization?: QuotaOrganizationScope | null): Promise<QuotaSummary> {
+    const scope = normalizeOrganizationScope(organization);
     const limit = await this.getDefaultLimit();
+    if (scope) {
+      const rows = await this.listRowsForOrganization(scope);
+      const usedUserCount = rows.length;
+      const totalUsedPower = roundPower(rows.reduce((sum, row) => sum + toNumber(row.used_power), 0));
+
+      return {
+        tool: this.id,
+        quota_limit: limit,
+        used_user_count: usedUserCount,
+        total_used_power: totalUsedPower,
+        total_remaining_power: roundPower(Math.max(0, usedUserCount * limit - totalUsedPower)),
+      };
+    }
+
     const [rows] = await pool.query<Array<RowDataPacket & {
       used_user_count: string | number;
       total_used_power: string | number | null;
@@ -187,7 +358,15 @@ export class SimpleUserUsageQuotaTool implements QuotaTool {
     };
   }
 
-  async resetAllUsage(note = 'admin reset usage'): Promise<{ affectedUsers: number; clearedPower: number }> {
+  async resetAllUsage(
+    note = 'admin reset usage',
+    organization?: QuotaOrganizationScope | null
+  ): Promise<{ affectedUsers: number; clearedPower: number }> {
+    const scope = normalizeOrganizationScope(organization);
+    if (scope) {
+      return this.resetScopedUsage(scope, note);
+    }
+
     const conn = await pool.getConnection();
     try {
       await conn.beginTransaction();
@@ -215,6 +394,64 @@ export class SimpleUserUsageQuotaTool implements QuotaTool {
 
       await conn.commit();
       return { affectedUsers, clearedPower };
+    } catch (error) {
+      await conn.rollback();
+      throw error;
+    } finally {
+      conn.release();
+    }
+  }
+
+  async resetUserUsage(
+    userId: number,
+    note = 'admin reset user usage',
+    options?: {
+      organization?: QuotaOrganizationScope | null;
+      requireLearnerRole?: boolean;
+    }
+  ): Promise<{ affectedUsers: number; clearedPower: number }> {
+    const normalizedUserId = normalizePositiveInteger(userId);
+    if (normalizedUserId === undefined) {
+      return { affectedUsers: 0, clearedPower: 0 };
+    }
+
+    const scope = normalizeOrganizationScope(options?.organization);
+    const conn = await pool.getConnection();
+    try {
+      await conn.beginTransaction();
+
+      const [rows] = await conn.query<UsageRow[]>(
+        'SELECT user_id, used_power, updated_at, user_snapshot FROM quota_user_usage WHERE user_id = ? FOR UPDATE',
+        [normalizedUserId]
+      );
+      const row = rows?.[0] ?? null;
+      if (!row) {
+        await conn.commit();
+        return { affectedUsers: 0, clearedPower: 0 };
+      }
+
+      const snapshot = parseUserSnapshot(row.user_snapshot);
+      if (!snapshotBelongsToOrganization(snapshot, scope)) {
+        throw new QuotaScopeMismatchError();
+      }
+      if (options?.requireLearnerRole && !isLearnerSnapshot(snapshot)) {
+        throw new QuotaTargetRoleNotAllowedError();
+      }
+
+      const clearedPower = roundPower(toNumber(row.used_power));
+      if (clearedPower !== 0) {
+        await this.insertLedger(conn, {
+          userId: normalizedUserId,
+          eventType: 'admin_reset',
+          powerDelta: -clearedPower,
+          usedPowerAfter: 0,
+          note,
+        });
+      }
+      await conn.query('UPDATE quota_user_usage SET used_power = 0 WHERE user_id = ?', [normalizedUserId]);
+
+      await conn.commit();
+      return { affectedUsers: 1, clearedPower };
     } catch (error) {
       await conn.rollback();
       throw error;
@@ -260,6 +497,29 @@ export class SimpleUserUsageQuotaTool implements QuotaTool {
     const offset = (page - 1) * pageSize;
     const limit = await this.getDefaultLimit();
     const search = typeof params.search === 'string' ? params.search.trim().toLowerCase() : '';
+    const scope = normalizeOrganizationScope(params.organization);
+
+    if (scope) {
+      const rows = (await this.listRowsForOrganization(scope))
+        .filter((row) => usageRowMatchesSearch(row, search))
+        .sort((left, right) => {
+          const timeDiff = usageRowUpdatedAtMs(right) - usageRowUpdatedAtMs(left);
+          return timeDiff !== 0 ? timeDiff : Number(right.user_id) - Number(left.user_id);
+        });
+      const total = rows.length;
+      const pageRows = rows.slice(offset, offset + pageSize);
+
+      return {
+        data: pageRows.map((row) => buildStatus(Number(row.user_id), limit, row)),
+        pagination: {
+          page,
+          pageSize,
+          total,
+          totalPages: Math.ceil(total / pageSize),
+        },
+      };
+    }
+
     const whereParams: unknown[] = [];
     let whereClause = '';
 
@@ -304,6 +564,57 @@ export class SimpleUserUsageQuotaTool implements QuotaTool {
         totalPages: Math.ceil(total / pageSize),
       },
     };
+  }
+
+  private async listRowsForOrganization(scope: QuotaOrganizationScope): Promise<UsageRow[]> {
+    const [rows] = await pool.query<UsageRow[]>(
+      'SELECT user_id, used_power, updated_at, user_snapshot FROM quota_user_usage'
+    );
+
+    return rows.filter((row) => snapshotBelongsToOrganization(parseUserSnapshot(row.user_snapshot), scope));
+  }
+
+  private async resetScopedUsage(
+    scope: QuotaOrganizationScope,
+    note: string
+  ): Promise<{ affectedUsers: number; clearedPower: number }> {
+    const conn = await pool.getConnection();
+    try {
+      await conn.beginTransaction();
+
+      const [rows] = await conn.query<UsageRow[]>(
+        'SELECT user_id, used_power, updated_at, user_snapshot FROM quota_user_usage FOR UPDATE'
+      );
+      const scopedRows = rows.filter((row) => snapshotBelongsToOrganization(parseUserSnapshot(row.user_snapshot), scope));
+      const userIds = scopedRows.map((row) => Number(row.user_id)).filter((id) => Number.isInteger(id) && id > 0);
+      const affectedUsers = userIds.length;
+      const clearedPower = roundPower(scopedRows.reduce((sum, row) => sum + toNumber(row.used_power), 0));
+
+      if (userIds.length > 0) {
+        const inClause = placeholders(userIds);
+        await conn.query(
+          `INSERT INTO quota_usage_ledger
+            (user_id, event_type, power_delta, used_power_after, note)
+           SELECT user_id, 'admin_reset', -used_power, 0, ?
+           FROM quota_user_usage
+           WHERE user_id IN (${inClause})
+             AND used_power <> 0`,
+          [note, ...userIds]
+        );
+        await conn.query(
+          `UPDATE quota_user_usage SET used_power = 0 WHERE user_id IN (${inClause})`,
+          userIds
+        );
+      }
+
+      await conn.commit();
+      return { affectedUsers, clearedPower };
+    } catch (error) {
+      await conn.rollback();
+      throw error;
+    } finally {
+      conn.release();
+    }
   }
 
   async reserve(

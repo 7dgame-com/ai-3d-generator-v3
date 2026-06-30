@@ -151,4 +151,147 @@ describe('SimpleUserUsageQuotaTool', () => {
     expect(mockConnQuery.mock.calls[2][0]).toBe('UPDATE quota_user_usage SET used_power = 0');
     expect(mockCommit).toHaveBeenCalledTimes(1);
   });
+
+  it('lists usage rows inside the requested organization scope', async () => {
+    mockPoolQuery
+      .mockResolvedValueOnce([[{ value: '100' }]])
+      .mockResolvedValueOnce([[
+        {
+          user_id: 7,
+          used_power: '30.00',
+          updated_at: new Date('2026-05-21T00:00:00.000Z'),
+          user_snapshot: JSON.stringify({
+            user_id: 7,
+            username: 'alice',
+            roles: ['user'],
+            organizations: [{ id: 12, name: 'other' }],
+          }),
+        },
+        {
+          user_id: 8,
+          used_power: '45.00',
+          updated_at: new Date('2026-05-22T00:00:00.000Z'),
+          user_snapshot: JSON.stringify({
+            user_id: 8,
+            username: 'bob',
+            roles: ['manager'],
+            organizations: [{ id: 7, name: 'school-a' }],
+          }),
+        },
+      ]]);
+
+    const result = await tool.listUsageStatuses({
+      page: 1,
+      pageSize: 20,
+      organization: { id: 7 },
+    });
+
+    expect(result.pagination.total).toBe(1);
+    expect(result.data[0]).toMatchObject({
+      user_id: 8,
+      used_power: 45,
+      user_snapshot: {
+        username: 'bob',
+        organizations: [{ id: 7, name: 'school-a' }],
+      },
+    });
+  });
+
+  it('resets only users in the requested organization scope', async () => {
+    mockConnQuery
+      .mockResolvedValueOnce([[
+        {
+          user_id: 7,
+          used_power: '30.00',
+          updated_at: new Date('2026-05-21T00:00:00.000Z'),
+          user_snapshot: JSON.stringify({
+            user_id: 7,
+            roles: ['root'],
+            organizations: [{ id: 7, name: 'school-a' }],
+          }),
+        },
+        {
+          user_id: 8,
+          used_power: '45.00',
+          updated_at: new Date('2026-05-22T00:00:00.000Z'),
+          user_snapshot: JSON.stringify({
+            user_id: 8,
+            roles: ['user'],
+            organizations: [{ id: 12, name: 'other' }],
+          }),
+        },
+      ]])
+      .mockResolvedValueOnce({ affectedRows: 1 })
+      .mockResolvedValueOnce({ affectedRows: 1 });
+
+    const result = await tool.resetAllUsage('org reset', { id: 7 });
+
+    expect(result).toEqual({ affectedUsers: 1, clearedPower: 30 });
+    expect(String(mockConnQuery.mock.calls[1][0])).toContain('WHERE user_id IN (?)');
+    expect(mockConnQuery.mock.calls[1][1]).toEqual(['org reset', 7]);
+    expect(mockConnQuery.mock.calls[2][1]).toEqual([7]);
+    expect(mockCommit).toHaveBeenCalledTimes(1);
+  });
+
+  it('resets a single learner usage row inside organization scope', async () => {
+    mockConnQuery
+      .mockResolvedValueOnce([[
+        {
+          user_id: 9,
+          used_power: '12.50',
+          updated_at: new Date('2026-05-22T00:00:00.000Z'),
+          user_snapshot: JSON.stringify({
+            user_id: 9,
+            roles: ['user'],
+            organizations: [{ id: 7, name: 'school-a' }],
+          }),
+        },
+      ]])
+      .mockResolvedValueOnce({ affectedRows: 1 })
+      .mockResolvedValueOnce({ affectedRows: 1 });
+
+    const result = await tool.resetUserUsage(9, 'single reset', {
+      organization: { id: 7 },
+      requireLearnerRole: true,
+    });
+
+    expect(result).toEqual({ affectedUsers: 1, clearedPower: 12.5 });
+    expect(String(mockConnQuery.mock.calls[1][0])).toContain('INSERT INTO quota_usage_ledger');
+    expect(mockConnQuery.mock.calls[1][1]).toEqual([
+      9,
+      'admin_reset',
+      -12.5,
+      0,
+      null,
+      null,
+      0,
+      0,
+      'single reset',
+    ]);
+    expect(mockConnQuery.mock.calls[2]).toEqual([
+      'UPDATE quota_user_usage SET used_power = 0 WHERE user_id = ?',
+      [9],
+    ]);
+  });
+
+  it('rejects single user resets for protected roles in organization scope', async () => {
+    mockConnQuery.mockResolvedValueOnce([[
+      {
+        user_id: 10,
+        used_power: '12.50',
+        updated_at: new Date('2026-05-22T00:00:00.000Z'),
+        user_snapshot: JSON.stringify({
+          user_id: 10,
+          roles: ['admin'],
+          organizations: [{ id: 7, name: 'school-a' }],
+        }),
+      },
+    ]]);
+
+    await expect(tool.resetUserUsage(10, 'single reset', {
+      organization: { id: 7 },
+      requireLearnerRole: true,
+    })).rejects.toMatchObject({ code: 'QUOTA_TARGET_ROLE_NOT_ALLOWED' });
+    expect(mockRollback).toHaveBeenCalledTimes(1);
+  });
 });

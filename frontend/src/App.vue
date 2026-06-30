@@ -7,6 +7,7 @@
 import { usePluginMessageBridge } from './composables/usePluginMessageBridge'
 import { removeAllTokens, setToken } from './utils/token'
 import { setThemeFromConfig } from './composables/useTheme'
+import { clearHostPluginConfig, setHostPluginConfig } from './composables/useHostPluginContext'
 
 declare const __APP_VERSION__: string
 const appVersion = `v${__APP_VERSION__}`
@@ -16,6 +17,7 @@ usePluginMessageBridge({
     if (token) {
       setToken(token)
     }
+    setHostPluginConfig(config)
     setThemeFromConfig(config)
   },
   onTokenUpdate: (token) => {
@@ -24,6 +26,7 @@ usePluginMessageBridge({
     }
   },
   onDestroy: () => {
+    clearHostPluginConfig()
     removeAllTokens()
   },
 })

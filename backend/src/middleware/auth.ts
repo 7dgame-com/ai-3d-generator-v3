@@ -23,6 +23,11 @@ export interface UserInfo {
   userId: number;
   username?: string;
   roles?: string[];
+  organizations?: Array<{
+    id?: number;
+    name?: string;
+    title?: string;
+  }>;
   [key: string]: unknown;
 }
 

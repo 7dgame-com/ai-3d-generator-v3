@@ -1,13 +1,13 @@
 import { createRouter, createWebHistory } from 'vue-router'
 import { isInIframe } from '../utils/token'
-import { useAuthSession } from '../composables/useAuthSession'
+import { usePermissions } from '../composables/usePermissions'
 import { notifyHostPluginUrlChanged } from '../utils/hostEvents'
 
 declare module 'vue-router' {
   interface RouteMeta {
     public?: boolean
     title?: string
-    requiresRoot?: boolean
+    requiresQuotaAdmin?: boolean
   }
 }
 
@@ -52,7 +52,7 @@ const router = createRouter({
           path: 'admin',
           name: 'Admin',
           component: () => import('../views/AdminView.vue'),
-          meta: { title: 'Admin', requiresRoot: true },
+          meta: { title: 'Admin', requiresQuotaAdmin: true },
         },
       ],
     },
@@ -64,13 +64,13 @@ router.beforeEach(async (to) => {
     return '/not-in-iframe'
   }
 
-  if (!to.meta.requiresRoot) {
+  if (!to.meta.requiresQuotaAdmin) {
     return true
   }
 
-  const { fetchSession, isRootUser } = useAuthSession()
-  await fetchSession()
-  if (to.meta.requiresRoot && !isRootUser.value) {
+  const { fetchAllowedActions, can } = usePermissions()
+  await fetchAllowedActions()
+  if (to.meta.requiresQuotaAdmin && !can('manage-quota')) {
     return '/no-permission'
   }
   return true
