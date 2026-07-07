@@ -74,7 +74,7 @@ export function usePermissions() {
   const canManageQuota = computed(() =>
     loaded.value && (
       isRootUser.value
-      || (isOrganizationAdmin.value && belongsToCurrentOrganization.value)
+      || isOrganizationAdmin.value
     )
   )
 

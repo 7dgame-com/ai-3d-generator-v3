@@ -63,7 +63,7 @@ describe('quota organization admin access', () => {
     });
   });
 
-  it('allows same-organization managers to read quota summaries', async () => {
+  it('allows managers to read quota summaries for the requested organization', async () => {
     const req = createRequest({
       query: { organization_id: '7' },
       user: {
@@ -98,7 +98,7 @@ describe('quota organization admin access', () => {
     expect(mockListUsageStatuses).not.toHaveBeenCalled();
   });
 
-  it('allows same-organization admins to update the global default limit', async () => {
+  it('allows admins to update the global default limit with an organization scope', async () => {
     const req = createRequest({
       body: { organization_id: 7, quota_limit: 250.555 },
       user: {
@@ -119,7 +119,7 @@ describe('quota organization admin access', () => {
     });
   });
 
-  it('rejects organization managers updating default limits without a scope', async () => {
+  it('allows managers to update default limits without an organization scope', async () => {
     const req = createRequest({
       body: { quota_limit: 250 },
       user: {
@@ -132,8 +132,12 @@ describe('quota organization admin access', () => {
 
     await updateDefaultLimitHandler(req, res);
 
-    expect(res.status).toHaveBeenCalledWith(422);
-    expect(mockSetDefaultLimit).not.toHaveBeenCalled();
+    expect(mockSetDefaultLimit).toHaveBeenCalledWith(250);
+    expect(mockGetSummary).toHaveBeenCalledWith(null);
+    expect(res.json).toHaveBeenCalledWith({
+      success: true,
+      data: expect.objectContaining({ tool: 'simple-user-usage-quota' }),
+    });
   });
 
   it('lets root update the global default limit without an organization scope', async () => {
@@ -157,7 +161,7 @@ describe('quota organization admin access', () => {
     });
   });
 
-  it('rejects organization managers outside their organization', async () => {
+  it('allows admins to reset usage for the requested organization without membership checks', async () => {
     const req = createRequest({
       body: { organization_id: 12 },
       user: {
@@ -170,8 +174,12 @@ describe('quota organization admin access', () => {
 
     await resetUsageHandler(req, res);
 
-    expect(res.status).toHaveBeenCalledWith(403);
-    expect(mockResetAllUsage).not.toHaveBeenCalled();
+    expect(mockResetAllUsage).toHaveBeenCalledWith('organization reset by user 9', { id: 12 });
+    expect(mockGetSummary).toHaveBeenCalledWith({ id: 12 });
+    expect(res.json).toHaveBeenCalledWith({
+      success: true,
+      data: expect.objectContaining({ affectedUsers: 1, clearedPower: 12.5 }),
+    });
   });
 
   it('lets root reset global usage without an organization scope', async () => {

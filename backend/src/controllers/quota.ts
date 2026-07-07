@@ -31,10 +31,6 @@ function normalizeText(value: unknown): string | undefined {
   return typeof value === 'string' && value.trim().length > 0 ? value.trim() : undefined;
 }
 
-function comparableText(value: unknown): string {
-  return typeof value === 'string' ? value.trim().toLowerCase() : '';
-}
-
 function requestValue(req: AuthenticatedRequest, key: string): unknown {
   const body = req.body as Record<string, unknown> | undefined;
   const query = req.query as Record<string, unknown> | undefined;
@@ -56,24 +52,6 @@ function resolveOrganizationScope(req: AuthenticatedRequest): QuotaOrganizationS
 
 function hasAnyRole(roles: readonly string[] | undefined, expected: readonly string[]): boolean {
   return Array.isArray(roles) && expected.some((role) => roles.includes(role));
-}
-
-function belongsToOrganization(req: AuthenticatedRequest, scope: QuotaOrganizationScope): boolean {
-  const organizations = Array.isArray(req.user.organizations) ? req.user.organizations : [];
-  return organizations.some((organization) => {
-    const actualId = parsePositiveInteger(organization.id);
-    if (scope.id !== undefined && actualId === scope.id) {
-      return true;
-    }
-
-    const expectedName = comparableText(scope.name);
-    if (!expectedName) {
-      return false;
-    }
-
-    return comparableText(organization.name) === expectedName
-      || comparableText(organization.title) === expectedName;
-  });
 }
 
 function resolveQuotaAdminAccess(
@@ -99,12 +77,23 @@ function resolveQuotaAdminAccess(
     return null;
   }
 
-  if (!belongsToOrganization(req, organization)) {
-    res.status(403).json({ code: 2003, message: '不能管理非本组织账号' });
+  return { organization, isRoot: false };
+}
+
+function resolveQuotaLimitAdminAccess(
+  req: AuthenticatedRequest,
+  res: Response
+): QuotaAdminAccess | null {
+  const roles = req.user.roles ?? [];
+  const isRoot = hasAnyRole(roles, ['root']);
+  const isQuotaManager = hasAnyRole(roles, ['admin', 'manager']);
+
+  if (!isRoot && !isQuotaManager) {
+    res.status(403).json({ code: 2003, message: '没有权限执行此操作' });
     return null;
   }
 
-  return { organization, isRoot: false };
+  return { organization: resolveOrganizationScope(req), isRoot };
 }
 
 function sendQuotaOperationError(res: Response, error: unknown): void {
@@ -159,7 +148,7 @@ export async function updateDefaultLimitHandler(
   req: AuthenticatedRequest,
   res: Response
 ): Promise<void> {
-  const access = resolveQuotaAdminAccess(req, res);
+  const access = resolveQuotaLimitAdminAccess(req, res);
   if (!access) {
     return;
   }
