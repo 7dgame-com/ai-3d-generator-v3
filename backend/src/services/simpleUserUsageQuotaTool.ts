@@ -1,4 +1,3 @@
-import { createHash } from 'node:crypto';
 import type { PoolConnection, RowDataPacket } from 'mysql2/promise';
 import { pool } from '../db/connection';
 import type {
@@ -16,13 +15,7 @@ import type {
 } from './quotaTool';
 
 const CONFIG_KEY_DEFAULT_LIMIT = 'quota.default_limit_power';
-const CONFIG_KEY_ORGANIZATION_LIMIT_PREFIX = `${CONFIG_KEY_DEFAULT_LIMIT}.org.`;
 const TOOL_ID: QuotaToolId = 'simple-user-usage-quota';
-
-interface ConfigValueRow extends RowDataPacket {
-  key: string;
-  value: string | number | null;
-}
 
 interface UsageRow extends RowDataPacket {
   user_id: number;
@@ -233,57 +226,6 @@ function placeholders(values: unknown[]): string {
   return values.map(() => '?').join(', ');
 }
 
-function uniqueStrings(values: Array<string | null | undefined>): string[] {
-  return Array.from(new Set(values.filter((value): value is string => typeof value === 'string' && value.length > 0)));
-}
-
-function organizationIdLimitKey(id: unknown): string | null {
-  const normalizedId = normalizePositiveInteger(id);
-  return normalizedId === undefined ? null : `${CONFIG_KEY_ORGANIZATION_LIMIT_PREFIX}id.${normalizedId}`;
-}
-
-function organizationNameLimitKey(name: unknown): string | null {
-  const normalizedName = normalizeComparableText(name);
-  if (!normalizedName) {
-    return null;
-  }
-
-  const digest = createHash('sha1').update(normalizedName).digest('hex').slice(0, 16);
-  return `${CONFIG_KEY_ORGANIZATION_LIMIT_PREFIX}name.${digest}`;
-}
-
-function organizationLimitKeysForScope(scope?: QuotaOrganizationScope | null): string[] {
-  const normalizedScope = normalizeOrganizationScope(scope);
-  if (!normalizedScope) {
-    return [];
-  }
-
-  return uniqueStrings([
-    organizationIdLimitKey(normalizedScope.id),
-    organizationNameLimitKey(normalizedScope.name),
-  ]);
-}
-
-function organizationLimitWriteKey(scope?: QuotaOrganizationScope | null): string {
-  return organizationLimitKeysForScope(scope)[0] ?? CONFIG_KEY_DEFAULT_LIMIT;
-}
-
-function organizationLimitKeysForSummary(organization: QuotaOrganizationSummary): string[] {
-  return uniqueStrings([
-    organizationIdLimitKey(organization.id),
-    organizationNameLimitKey(organization.name),
-    organizationNameLimitKey(organization.title),
-  ]);
-}
-
-function organizationLimitKeysForSnapshot(snapshot?: QuotaUserSnapshot | null): string[] {
-  return uniqueStrings(
-    normalizeOrganizations(snapshot?.organizations)
-      ?.flatMap((organization) => organizationLimitKeysForSummary(organization))
-      ?? []
-  );
-}
-
 function normalizeUserSnapshot(userId: number, snapshot?: QuotaUserSnapshot): QuotaUserSnapshot | null {
   if (!snapshot) {
     return null;
@@ -362,49 +304,26 @@ function buildStatus(userId: number, limit: number, row?: UsageRow | null): Quot
 export class SimpleUserUsageQuotaTool implements QuotaTool {
   readonly id = TOOL_ID;
 
-  async getDefaultLimit(organization?: QuotaOrganizationScope | null): Promise<number> {
-    return this.getLimitForCandidateKeys(organizationLimitKeysForScope(organization));
+  async getDefaultLimit(): Promise<number> {
+    const [rows] = await pool.query<Array<RowDataPacket & { value: string }>>(
+      'SELECT `value` FROM system_config WHERE `key` = ? LIMIT 1',
+      [CONFIG_KEY_DEFAULT_LIMIT]
+    );
+    return normalizeLimit(rows?.[0]?.value ?? process.env.DEFAULT_QUOTA_LIMIT_POWER ?? 0);
   }
 
-  async setDefaultLimit(limit: number, organization?: QuotaOrganizationScope | null): Promise<void> {
+  async setDefaultLimit(limit: number): Promise<void> {
     const normalizedLimit = normalizeLimit(limit);
-    const configKey = organizationLimitWriteKey(organization);
     await pool.query(
       `INSERT INTO system_config (\`key\`, \`value\`) VALUES (?, ?)
        ON DUPLICATE KEY UPDATE \`value\` = VALUES(\`value\`), updated_at = CURRENT_TIMESTAMP`,
-      [configKey, String(normalizedLimit)]
+      [CONFIG_KEY_DEFAULT_LIMIT, String(normalizedLimit)]
     );
-  }
-
-  private async getLimitForCandidateKeys(candidateKeys: string[]): Promise<number> {
-    const orderedCandidateKeys = uniqueStrings(candidateKeys);
-    const keys = uniqueStrings([...orderedCandidateKeys, CONFIG_KEY_DEFAULT_LIMIT]);
-    const [rows] = await pool.query<ConfigValueRow[]>(
-      `SELECT \`key\`, \`value\`
-       FROM system_config
-       WHERE \`key\` IN (${placeholders(keys)})`,
-      keys
-    );
-    const valuesByKey = new Map(rows.map((row) => [String(row.key), normalizeLimit(row.value)]));
-
-    for (const key of orderedCandidateKeys) {
-      const limit = valuesByKey.get(key);
-      if (limit !== undefined) {
-        return limit;
-      }
-    }
-
-    return valuesByKey.get(CONFIG_KEY_DEFAULT_LIMIT)
-      ?? normalizeLimit(process.env.DEFAULT_QUOTA_LIMIT_POWER ?? 0);
-  }
-
-  private async getLimitForSnapshot(snapshot?: QuotaUserSnapshot | null): Promise<number> {
-    return this.getLimitForCandidateKeys(organizationLimitKeysForSnapshot(snapshot));
   }
 
   async getSummary(organization?: QuotaOrganizationScope | null): Promise<QuotaSummary> {
     const scope = normalizeOrganizationScope(organization);
-    const limit = await this.getDefaultLimit(scope);
+    const limit = await this.getDefaultLimit();
     if (scope) {
       const rows = await this.listRowsForOrganization(scope);
       const usedUserCount = rows.length;
@@ -542,12 +461,13 @@ export class SimpleUserUsageQuotaTool implements QuotaTool {
   }
 
   async getUserStatus(userId: number, userSnapshot?: QuotaUserSnapshot): Promise<QuotaStatus> {
+    void userSnapshot;
     const [rows] = await pool.query<UsageRow[]>(
       'SELECT user_id, used_power, updated_at, user_snapshot FROM quota_user_usage WHERE user_id = ? LIMIT 1',
       [userId]
     );
     const row = rows?.[0] ?? null;
-    const limit = await this.getLimitForSnapshot(userSnapshot ?? parseUserSnapshot(row?.user_snapshot));
+    const limit = await this.getDefaultLimit();
     return buildStatus(userId, limit, row);
   }
 
@@ -558,6 +478,7 @@ export class SimpleUserUsageQuotaTool implements QuotaTool {
       return result;
     }
 
+    const limit = await this.getDefaultLimit();
     const [rows] = await pool.query<UsageRow[]>(
       `SELECT user_id, used_power, updated_at, user_snapshot
        FROM quota_user_usage
@@ -568,7 +489,6 @@ export class SimpleUserUsageQuotaTool implements QuotaTool {
 
     for (const userId of uniqueUserIds) {
       const row = rowsByUserId.get(userId) ?? null;
-      const limit = await this.getLimitForSnapshot(parseUserSnapshot(row?.user_snapshot));
       result.set(userId, buildStatus(userId, limit, row));
     }
     return result;
@@ -709,9 +629,10 @@ export class SimpleUserUsageQuotaTool implements QuotaTool {
   ): Promise<QuotaReserveResult> {
     const reserveAmount = roundPower(amount);
     if (reserveAmount <= 0) {
-      return { success: true, usedPowerAfter: 0, remainingPower: (await this.getLimitForSnapshot(userSnapshot)) };
+      return { success: true, usedPowerAfter: 0, remainingPower: (await this.getDefaultLimit()) };
     }
 
+    const limit = await this.getDefaultLimit();
     const conn = await pool.getConnection();
     const snapshotJson = serializeUserSnapshot(userId, userSnapshot);
 
@@ -722,7 +643,6 @@ export class SimpleUserUsageQuotaTool implements QuotaTool {
         [userId]
       );
 
-      const limit = await this.getLimitForSnapshot(userSnapshot ?? parseUserSnapshot(rows?.[0]?.user_snapshot));
       const currentUsedPower = roundPower(toNumber(rows?.[0]?.used_power));
       const nextUsedPower = roundPower(currentUsedPower + reserveAmount);
       if (nextUsedPower > limit) {

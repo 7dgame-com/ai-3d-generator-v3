@@ -108,21 +108,18 @@ describe('SimpleUserUsageQuotaTool', () => {
     expect(mockCommit).toHaveBeenCalledTimes(1);
   });
 
-  it('stores organization-scoped default limits separately from the global limit', async () => {
-    await tool.setDefaultLimit(88.888, { id: 7 });
+  it('stores default limits in the global quota config', async () => {
+    await tool.setDefaultLimit(88.888);
 
     expect(mockPoolQuery).toHaveBeenCalledWith(
       expect.stringContaining('INSERT INTO system_config'),
-      ['quota.default_limit_power.org.id.7', '88.89']
+      ['quota.default_limit_power', '88.89']
     );
   });
 
-  it('uses organization-scoped limits for organization summaries', async () => {
+  it('uses the global limit for organization summaries', async () => {
     mockPoolQuery
-      .mockResolvedValueOnce([[
-        { key: 'quota.default_limit_power.org.id.7', value: '25' },
-        { key: 'quota.default_limit_power', value: '100' },
-      ]])
+      .mockResolvedValueOnce([[{ value: '100' }]])
       .mockResolvedValueOnce([[
         {
           user_id: 8,
@@ -140,18 +137,15 @@ describe('SimpleUserUsageQuotaTool', () => {
     const summary = await tool.getSummary({ id: 7 });
 
     expect(summary).toMatchObject({
-      quota_limit: 25,
+      quota_limit: 100,
       used_user_count: 1,
       total_used_power: 10,
-      total_remaining_power: 15,
+      total_remaining_power: 90,
     });
   });
 
-  it('applies organization-scoped limits when reserving user power', async () => {
-    mockPoolQuery.mockResolvedValueOnce([[
-      { key: 'quota.default_limit_power.org.id.7', value: '10' },
-      { key: 'quota.default_limit_power', value: '100' },
-    ]]);
+  it('applies the global limit when reserving user power with an organization snapshot', async () => {
+    mockPoolQuery.mockResolvedValueOnce([[{ value: '10' }]]);
     mockConnQuery.mockResolvedValueOnce([[]]);
 
     const result = await tool.reserve(7, 'tripo3d', 20, 'temp:7:1', {

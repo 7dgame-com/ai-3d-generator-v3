@@ -98,7 +98,7 @@ describe('quota organization admin access', () => {
     expect(mockListUsageStatuses).not.toHaveBeenCalled();
   });
 
-  it('allows same-organization admins to update scoped default limits', async () => {
+  it('allows same-organization admins to update the global default limit', async () => {
     const req = createRequest({
       body: { organization_id: 7, quota_limit: 250.555 },
       user: {
@@ -111,7 +111,7 @@ describe('quota organization admin access', () => {
 
     await updateDefaultLimitHandler(req, res);
 
-    expect(mockSetDefaultLimit).toHaveBeenCalledWith(250.56, { id: 7 });
+    expect(mockSetDefaultLimit).toHaveBeenCalledWith(250.56);
     expect(mockGetSummary).toHaveBeenCalledWith({ id: 7 });
     expect(res.json).toHaveBeenCalledWith({
       success: true,
@@ -149,7 +149,7 @@ describe('quota organization admin access', () => {
 
     await updateDefaultLimitHandler(req, res);
 
-    expect(mockSetDefaultLimit).toHaveBeenCalledWith(300, null);
+    expect(mockSetDefaultLimit).toHaveBeenCalledWith(300);
     expect(mockGetSummary).toHaveBeenCalledWith(null);
     expect(res.json).toHaveBeenCalledWith({
       success: true,

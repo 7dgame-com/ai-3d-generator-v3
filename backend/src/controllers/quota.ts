@@ -171,7 +171,7 @@ export async function updateDefaultLimitHandler(
   }
 
   try {
-    await activeQuotaTool.setDefaultLimit(limit, access.organization);
+    await activeQuotaTool.setDefaultLimit(limit);
     const summary = await activeQuotaTool.getSummary(access.organization);
     res.json({ success: true, data: summary });
   } catch (error) {

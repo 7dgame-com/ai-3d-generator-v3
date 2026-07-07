@@ -87,7 +87,7 @@ export default {
     rootGlobalQuotaScope: 'すべての組織',
     organizationQuotaScope: '現在の組織',
     defaultQuotaLimit: 'デフォルト上限',
-    defaultQuotaLimitMeta: '現在の範囲内の各ユーザーに適用する上限',
+    defaultQuotaLimitMeta: 'すべてのユーザーに共通する上限',
     providerTotalPower: 'Provider 残高',
     providerTotalPowerMeta: '上流 API アカウントから取得',
     totalUsedPower: '記録済み使用量',
