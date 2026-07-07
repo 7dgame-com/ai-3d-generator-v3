@@ -92,7 +92,7 @@
       </div>
 
       <div class="quota-config">
-        <div v-if="isRootUser" class="quota-limit-control">
+        <div class="quota-limit-control">
           <span>{{ t('admin.defaultQuotaLimit') }}</span>
           <el-input-number
             v-model="quotaLimitDraft"
@@ -104,7 +104,7 @@
             {{ t('common.save') }}
           </el-button>
         </div>
-        <div v-else class="quota-scope-badge">
+        <div v-if="!isRootUser" class="quota-scope-badge">
           <span>{{ t('admin.organizationQuotaScope') }}</span>
           <strong>{{ quotaScopeLabel }}</strong>
         </div>
@@ -432,13 +432,9 @@ async function loadQuotaData() {
 }
 
 async function saveDefaultLimit() {
-  if (!isRootUser.value) {
-    return
-  }
-
   limitSaving.value = true
   try {
-    const response = await updateDefaultQuotaLimit(quotaLimitDraft.value)
+    const response = await updateDefaultQuotaLimit(quotaLimitDraft.value, quotaRequestParams())
     quotaSummary.value = response.data.data
     quotaLimitDraft.value = quotaSummary.value.quota_limit
     ElMessage.success(t('common.saved'))

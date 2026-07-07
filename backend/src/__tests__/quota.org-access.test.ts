@@ -2,6 +2,7 @@ import type { Response } from 'express';
 import type { AuthenticatedRequest } from '../middleware/auth';
 
 const mockGetSummary = jest.fn();
+const mockSetDefaultLimit = jest.fn();
 const mockResetAllUsage = jest.fn();
 const mockResetUserUsage = jest.fn();
 const mockListUsageStatuses = jest.fn();
@@ -9,6 +10,7 @@ const mockListUsageStatuses = jest.fn();
 jest.mock('../services/quotaToolRegistry', () => ({
   activeQuotaTool: {
     getSummary: (...args: unknown[]) => mockGetSummary(...args),
+    setDefaultLimit: (...args: unknown[]) => mockSetDefaultLimit(...args),
     resetAllUsage: (...args: unknown[]) => mockResetAllUsage(...args),
     resetUserUsage: (...args: unknown[]) => mockResetUserUsage(...args),
     listUsageStatuses: (...args: unknown[]) => mockListUsageStatuses(...args),
@@ -20,6 +22,7 @@ import {
   listUserQuotasHandler,
   resetUsageHandler,
   resetUserUsageHandler,
+  updateDefaultLimitHandler,
 } from '../controllers/quota';
 
 function createResponseDouble() {
@@ -51,6 +54,7 @@ describe('quota organization admin access', () => {
       total_used_power: 0,
       total_remaining_power: 0,
     });
+    mockSetDefaultLimit.mockResolvedValue(undefined);
     mockResetAllUsage.mockResolvedValue({ affectedUsers: 1, clearedPower: 12.5 });
     mockResetUserUsage.mockResolvedValue({ affectedUsers: 1, clearedPower: 5 });
     mockListUsageStatuses.mockResolvedValue({
@@ -92,6 +96,65 @@ describe('quota organization admin access', () => {
 
     expect(res.status).toHaveBeenCalledWith(422);
     expect(mockListUsageStatuses).not.toHaveBeenCalled();
+  });
+
+  it('allows same-organization admins to update scoped default limits', async () => {
+    const req = createRequest({
+      body: { organization_id: 7, quota_limit: 250.555 },
+      user: {
+        userId: 9,
+        roles: ['admin'],
+        organizations: [{ id: 7, name: 'school-a' }],
+      },
+    });
+    const res = createResponseDouble();
+
+    await updateDefaultLimitHandler(req, res);
+
+    expect(mockSetDefaultLimit).toHaveBeenCalledWith(250.56, { id: 7 });
+    expect(mockGetSummary).toHaveBeenCalledWith({ id: 7 });
+    expect(res.json).toHaveBeenCalledWith({
+      success: true,
+      data: expect.objectContaining({ tool: 'simple-user-usage-quota' }),
+    });
+  });
+
+  it('rejects organization managers updating default limits without a scope', async () => {
+    const req = createRequest({
+      body: { quota_limit: 250 },
+      user: {
+        userId: 9,
+        roles: ['manager'],
+        organizations: [{ id: 7, name: 'school-a' }],
+      },
+    });
+    const res = createResponseDouble();
+
+    await updateDefaultLimitHandler(req, res);
+
+    expect(res.status).toHaveBeenCalledWith(422);
+    expect(mockSetDefaultLimit).not.toHaveBeenCalled();
+  });
+
+  it('lets root update the global default limit without an organization scope', async () => {
+    const req = createRequest({
+      body: { quota_limit: 300 },
+      user: {
+        userId: 1,
+        roles: ['root'],
+        organizations: [],
+      },
+    });
+    const res = createResponseDouble();
+
+    await updateDefaultLimitHandler(req, res);
+
+    expect(mockSetDefaultLimit).toHaveBeenCalledWith(300, null);
+    expect(mockGetSummary).toHaveBeenCalledWith(null);
+    expect(res.json).toHaveBeenCalledWith({
+      success: true,
+      data: expect.objectContaining({ tool: 'simple-user-usage-quota' }),
+    });
   });
 
   it('rejects organization managers outside their organization', async () => {

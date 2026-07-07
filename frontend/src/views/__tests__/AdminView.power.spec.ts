@@ -21,6 +21,8 @@ describe('AdminView account quota wiring', () => {
     expect(source).toContain("t('admin.resetAllUsage')")
     expect(source).toContain("t('admin.resetSingleUserUsage')")
     expect(source).toContain("t('admin.userSearchPlaceholder')")
+    expect(source).toContain('updateDefaultQuotaLimit(quotaLimitDraft.value, quotaRequestParams())')
+    expect(source).not.toContain('v-if="isRootUser" class="quota-limit-control"')
     expect(source).not.toContain("t('admin.walletBalance')")
     expect(source).not.toContain("t('admin.poolBalance')")
     expect(source).not.toContain("t('admin.compatRechargeAction')")

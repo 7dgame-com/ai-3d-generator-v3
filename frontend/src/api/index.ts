@@ -392,9 +392,13 @@ export const getQuotaSummary = (params?: QuotaOrganizationParams) => params
   ? backendApi.get<{ data: QuotaSummary }>('/admin/quota/summary', { params })
   : backendApi.get<{ data: QuotaSummary }>('/admin/quota/summary')
 
-export const updateDefaultQuotaLimit = (quotaLimit: number) =>
+export const updateDefaultQuotaLimit = (
+  quotaLimit: number,
+  params?: QuotaOrganizationParams
+) =>
   backendApi.put<{ success: boolean; data: QuotaSummary }>('/admin/quota/default-limit', {
     quota_limit: quotaLimit,
+    ...(params ?? {}),
   })
 
 export const resetQuotaUsage = (payload?: { note?: string } & QuotaOrganizationParams) =>

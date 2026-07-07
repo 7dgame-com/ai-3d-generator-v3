@@ -87,7 +87,7 @@ export default {
     rootGlobalQuotaScope: '全部組織',
     organizationQuotaScope: '目前組織',
     defaultQuotaLimit: '預設額度上限',
-    defaultQuotaLimitMeta: '所有使用者共用的使用上限',
+    defaultQuotaLimitMeta: '目前範圍內每個使用者的使用上限',
     providerTotalPower: '供應商總餘額',
     providerTotalPowerMeta: '來自上游 API 帳戶',
     totalUsedPower: '表內累計已用',

@@ -124,7 +124,7 @@ describe('frontend api module', () => {
     expect(mockBackendGet).toHaveBeenCalledWith('/admin/quota/summary')
   })
 
-  it('updates the global default quota limit through the admin endpoint', async () => {
+  it('updates the default quota limit through the admin endpoint with optional scope', async () => {
     mockBackendPost.mockResolvedValue({ data: { success: true } })
     mockBackendPut.mockResolvedValue({ data: { success: true } })
 
@@ -135,12 +135,12 @@ describe('frontend api module', () => {
       getUserQuotas,
     } = await import('../index')
 
-    await updateDefaultQuotaLimit(1200)
+    await updateDefaultQuotaLimit(1200, { organization_id: 7 })
     await resetQuotaUsage({ organization_id: 7 })
     await resetUserQuotaUsage(42, { organization_id: 7 })
     await getUserQuotas({ search: 'alice', page: 2, pageSize: 10, organization_id: 7 })
 
-    expect(mockBackendPut).toHaveBeenCalledWith('/admin/quota/default-limit', { quota_limit: 1200 })
+    expect(mockBackendPut).toHaveBeenCalledWith('/admin/quota/default-limit', { quota_limit: 1200, organization_id: 7 })
     expect(mockBackendPost).toHaveBeenCalledWith('/admin/quota/reset-usage', { organization_id: 7 })
     expect(mockBackendPost).toHaveBeenCalledWith('/admin/user-quotas/42/reset', { organization_id: 7 })
     expect(mockBackendGet).toHaveBeenCalledWith('/admin/user-quotas', {

@@ -87,7 +87,7 @@ export default {
     rootGlobalQuotaScope: 'All organizations',
     organizationQuotaScope: 'Current organization',
     defaultQuotaLimit: 'Default Quota Limit',
-    defaultQuotaLimitMeta: 'Shared limit for every user',
+    defaultQuotaLimitMeta: 'Usage limit for each user in the current scope',
     providerTotalPower: 'Provider Balance',
     providerTotalPowerMeta: 'Read from upstream API accounts',
     totalUsedPower: 'Recorded Used Power',

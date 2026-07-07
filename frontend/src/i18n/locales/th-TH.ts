@@ -87,7 +87,7 @@ export default {
     rootGlobalQuotaScope: 'ทุกองค์กร',
     organizationQuotaScope: 'องค์กรปัจจุบัน',
     defaultQuotaLimit: 'เพดานโควตาเริ่มต้น',
-    defaultQuotaLimitMeta: 'ใช้ร่วมกันเป็นเพดานเดียวของผู้ใช้ทุกคน',
+    defaultQuotaLimitMeta: 'เพดานการใช้ของผู้ใช้แต่ละคนในขอบเขตปัจจุบัน',
     providerTotalPower: 'ยอดคงเหลือผู้ให้บริการ',
     providerTotalPowerMeta: 'อ่านจากบัญชี API ต้นทาง',
     totalUsedPower: 'ยอดใช้แล้วในระบบ',

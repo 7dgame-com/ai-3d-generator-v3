@@ -1,6 +1,7 @@
 import { Response } from 'express';
 import { AuthenticatedRequest } from '../middleware/auth';
 import { activeQuotaTool } from '../services/quotaToolRegistry';
+import { buildQuotaUserSnapshot } from '../services/quotaUserSnapshot';
 import type { QuotaOrganizationScope } from '../services/quotaTool';
 
 interface QuotaAdminAccess {
@@ -128,7 +129,7 @@ export async function getQuotaStatusHandler(
   res: Response
 ): Promise<void> {
   try {
-    const status = await activeQuotaTool.getUserStatus(req.user.userId);
+    const status = await activeQuotaTool.getUserStatus(req.user.userId, buildQuotaUserSnapshot(req.user));
     res.json({ data: status });
   } catch (error) {
     console.error('[QuotaController] GET /credits/status error:', error);
@@ -158,6 +159,11 @@ export async function updateDefaultLimitHandler(
   req: AuthenticatedRequest,
   res: Response
 ): Promise<void> {
+  const access = resolveQuotaAdminAccess(req, res);
+  if (!access) {
+    return;
+  }
+
   const limit = normalizeLimit((req.body as { quota_limit?: unknown }).quota_limit);
   if (limit === null) {
     res.status(422).json({ code: 'INVALID_QUOTA_LIMIT', message: 'quota_limit 必须是大于等于 0 的数字' });
@@ -165,8 +171,8 @@ export async function updateDefaultLimitHandler(
   }
 
   try {
-    await activeQuotaTool.setDefaultLimit(limit);
-    const summary = await activeQuotaTool.getSummary();
+    await activeQuotaTool.setDefaultLimit(limit, access.organization);
+    const summary = await activeQuotaTool.getSummary(access.organization);
     res.json({ success: true, data: summary });
   } catch (error) {
     console.error('[QuotaController] PUT /admin/quota/default-limit error:', error);
