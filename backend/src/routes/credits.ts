@@ -2,11 +2,11 @@
  * Quota routes
  *
  * GET  /credits/status                 — auth（当前用户额度状态）
- * GET  /admin/quota/summary            — auth + root 或 admin/manager（非 root 需提供组织范围）
+ * GET  /admin/quota/summary            — auth + root 或 admin/manager
  * PUT  /admin/quota/default-limit      — auth + root 或 admin/manager
- * POST /admin/quota/reset-usage        — auth + root 或 admin/manager（非 root 需提供组织范围）
- * POST /admin/user-quotas/:userId/reset — auth + root 或 admin/manager（非 root 需提供组织范围）
- * GET  /admin/user-quotas              — auth + root 或 admin/manager（非 root 需提供组织范围）
+ * POST /admin/quota/reset-usage        — auth + root 或 admin/manager
+ * POST /admin/user-quotas/:userId/reset — auth + root 或 admin/manager
+ * GET  /admin/user-quotas              — auth + root 或 admin/manager
  */
 
 import { Router, RequestHandler } from 'express';

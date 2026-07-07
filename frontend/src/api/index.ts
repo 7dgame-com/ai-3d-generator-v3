@@ -248,11 +248,6 @@ export interface UserQuotaItem {
   quota: QuotaStatus | null
 }
 
-export interface QuotaOrganizationParams {
-  organization_id?: number
-  organization_name?: string
-}
-
 export interface Pagination {
   page: number
   pageSize: number
@@ -388,20 +383,15 @@ export const getCreditStatus = (providerId?: string) =>
     params: providerId ? { provider_id: providerId } : undefined,
   })
 
-export const getQuotaSummary = (params?: QuotaOrganizationParams) => params
-  ? backendApi.get<{ data: QuotaSummary }>('/admin/quota/summary', { params })
-  : backendApi.get<{ data: QuotaSummary }>('/admin/quota/summary')
+export const getQuotaSummary = () =>
+  backendApi.get<{ data: QuotaSummary }>('/admin/quota/summary')
 
-export const updateDefaultQuotaLimit = (
-  quotaLimit: number,
-  params?: QuotaOrganizationParams
-) =>
+export const updateDefaultQuotaLimit = (quotaLimit: number) =>
   backendApi.put<{ success: boolean; data: QuotaSummary }>('/admin/quota/default-limit', {
     quota_limit: quotaLimit,
-    ...(params ?? {}),
   })
 
-export const resetQuotaUsage = (payload?: { note?: string } & QuotaOrganizationParams) =>
+export const resetQuotaUsage = (payload?: { note?: string }) =>
   backendApi.post<{
     success: boolean
     data: { affectedUsers: number; clearedPower: number; summary: QuotaSummary }
@@ -409,7 +399,7 @@ export const resetQuotaUsage = (payload?: { note?: string } & QuotaOrganizationP
 
 export const resetUserQuotaUsage = (
   userId: number,
-  payload?: { note?: string } & QuotaOrganizationParams
+  payload?: { note?: string }
 ) =>
   backendApi.post<{
     success: boolean
@@ -420,7 +410,7 @@ export const getUserQuotas = (params?: {
   search?: string
   page?: number
   pageSize?: number
-} & QuotaOrganizationParams) =>
+}) =>
   backendApi.get<{ data: UserQuotaItem[]; pagination: Pagination }>('/admin/user-quotas', {
     params,
   })

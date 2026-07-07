@@ -44,7 +44,7 @@ function createRequest(input: Partial<AuthenticatedRequest>): AuthenticatedReque
   } as AuthenticatedRequest;
 }
 
-describe('quota organization admin access', () => {
+describe('quota admin access', () => {
   beforeEach(() => {
     jest.clearAllMocks();
     mockGetSummary.mockResolvedValue({
@@ -63,7 +63,7 @@ describe('quota organization admin access', () => {
     });
   });
 
-  it('allows managers to read quota summaries for the requested organization', async () => {
+  it('allows managers to read global quota summaries', async () => {
     const req = createRequest({
       query: { organization_id: '7' },
       user: {
@@ -76,13 +76,13 @@ describe('quota organization admin access', () => {
 
     await getQuotaSummaryHandler(req, res);
 
-    expect(mockGetSummary).toHaveBeenCalledWith({ id: 7 });
+    expect(mockGetSummary).toHaveBeenCalledWith(null);
     expect(res.json).toHaveBeenCalledWith({
       data: expect.objectContaining({ tool: 'simple-user-usage-quota' }),
     });
   });
 
-  it('rejects organization managers when the organization scope is missing', async () => {
+  it('allows managers to list global user quotas without an organization scope', async () => {
     const req = createRequest({
       user: {
         userId: 9,
@@ -94,8 +94,16 @@ describe('quota organization admin access', () => {
 
     await listUserQuotasHandler(req, res);
 
-    expect(res.status).toHaveBeenCalledWith(422);
-    expect(mockListUsageStatuses).not.toHaveBeenCalled();
+    expect(mockListUsageStatuses).toHaveBeenCalledWith({
+      page: 1,
+      pageSize: 20,
+      search: '',
+      organization: null,
+    });
+    expect(res.json).toHaveBeenCalledWith({
+      data: [],
+      pagination: { page: 1, pageSize: 20, total: 0, totalPages: 0 },
+    });
   });
 
   it('allows admins to update the global default limit with an organization scope', async () => {
@@ -112,7 +120,7 @@ describe('quota organization admin access', () => {
     await updateDefaultLimitHandler(req, res);
 
     expect(mockSetDefaultLimit).toHaveBeenCalledWith(250.56);
-    expect(mockGetSummary).toHaveBeenCalledWith({ id: 7 });
+    expect(mockGetSummary).toHaveBeenCalledWith(null);
     expect(res.json).toHaveBeenCalledWith({
       success: true,
       data: expect.objectContaining({ tool: 'simple-user-usage-quota' }),
@@ -161,7 +169,7 @@ describe('quota organization admin access', () => {
     });
   });
 
-  it('allows admins to reset usage for the requested organization without membership checks', async () => {
+  it('allows admins to reset global usage even when an organization is supplied', async () => {
     const req = createRequest({
       body: { organization_id: 12 },
       user: {
@@ -174,8 +182,8 @@ describe('quota organization admin access', () => {
 
     await resetUsageHandler(req, res);
 
-    expect(mockResetAllUsage).toHaveBeenCalledWith('organization reset by user 9', { id: 12 });
-    expect(mockGetSummary).toHaveBeenCalledWith({ id: 12 });
+    expect(mockResetAllUsage).toHaveBeenCalledWith('admin reset by user 9', null);
+    expect(mockGetSummary).toHaveBeenCalledWith(null);
     expect(res.json).toHaveBeenCalledWith({
       success: true,
       data: expect.objectContaining({ affectedUsers: 1, clearedPower: 12.5 }),
@@ -202,7 +210,7 @@ describe('quota organization admin access', () => {
     });
   });
 
-  it('requires learner-role enforcement for organization-scoped single user resets', async () => {
+  it('requires learner-role enforcement for global single user resets', async () => {
     const req = createRequest({
       params: { userId: '42' },
       body: { organization_id: 7 },
@@ -217,7 +225,7 @@ describe('quota organization admin access', () => {
     await resetUserUsageHandler(req, res);
 
     expect(mockResetUserUsage).toHaveBeenCalledWith(42, 'single user reset by user 9', {
-      organization: { id: 7 },
+      organization: null,
       requireLearnerRole: true,
     });
   });
