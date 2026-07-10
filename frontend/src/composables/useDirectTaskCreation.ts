@@ -1,17 +1,16 @@
-import { ref } from 'vue'
+import { getCurrentInstance, onBeforeUnmount, ref } from 'vue'
 import {
-  failTask,
-  prepareTask,
-  registerTask,
+  createTask as createServerTask,
+  type Task,
 } from '../api'
-import { frontendProviderRegistry } from '../adapters/FrontendProviderRegistry'
 import type { TaskStatusOutput } from '../adapters/IFrontendProviderAdapter'
-import { useDirectTaskPoller } from './useDirectTaskPoller'
+import { useTaskPoller } from './useTaskPoller'
 
 interface DirectTaskCreationParams {
   type: 'text_to_model' | 'image_to_model'
   prompt?: string
-  imageFile?: File
+  imageBase64?: string
+  mimeType?: string
   providerId: string
   onUpdate?: (status: TaskStatusOutput) => void
   onComplete?: () => void
@@ -20,72 +19,61 @@ interface DirectTaskCreationParams {
 
 export function useDirectTaskCreation() {
   const isCreating = ref(false)
-  const { startPolling } = useDirectTaskPoller()
+  const { startPolling } = useTaskPoller()
+  const deferredPollTimers = new Set<number>()
+
+  function schedulePolling(taskId: string, onUpdate: (task: Task) => void) {
+    // The caller adds the optimistic task row immediately after createTask
+    // resolves. Deferring the first poll by one event-loop turn guarantees a
+    // very fast terminal response is applied to that row rather than dropped.
+    const timer = window.setTimeout(() => {
+      deferredPollTimers.delete(timer)
+      startPolling(taskId, onUpdate)
+    }, 0)
+    deferredPollTimers.add(timer)
+  }
+
+  // The composable is also unit-tested outside a Vue setup context. Register
+  // cleanup only when a component instance is available.
+  if (getCurrentInstance()) {
+    onBeforeUnmount(() => {
+      for (const timer of deferredPollTimers) {
+        window.clearTimeout(timer)
+      }
+      deferredPollTimers.clear()
+    })
+  }
 
   async function createTask(params: DirectTaskCreationParams): Promise<{ taskId: string; mode: 'direct' }> {
     isCreating.value = true
 
-    let prepareToken: string | null = null
-    let providerTaskId: string | null = null
-
     try {
-      const prepareResponse = await prepareTask({
-        type: params.type,
-        provider_id: params.providerId,
-      })
-
-      const prepared = prepareResponse.data
-      prepareToken = prepared.prepareToken
-
-      const adapter = frontendProviderRegistry.get(params.providerId)
-      if (!adapter) {
-        throw new Error(`Provider 适配器不存在: ${params.providerId}`)
-      }
-
-      const providerTask = await adapter.createTask(
-        prepared.apiKey,
-        {
-          type: params.type,
-          prompt: params.prompt,
-          imageFile: params.imageFile,
-        },
-        prepared.apiBaseUrl
-      )
-      providerTaskId = providerTask.taskId
-
-      await registerTask({
-        prepareToken: prepared.prepareToken,
-        taskId: providerTask.taskId,
+      // Creation, provider calls, polling, and billing are server-mediated so
+      // a long-lived provider API key never reaches the browser.
+      const response = await createServerTask({
         type: params.type,
         prompt: params.prompt,
-        pollingKey: providerTask.pollingKey,
+        imageBase64: params.imageBase64,
+        mimeType: params.mimeType,
+        provider_id: params.providerId,
       })
-
-      startPolling({
-        taskId: providerTask.taskId,
-        pollingKey: providerTask.pollingKey,
-        apiKey: prepared.apiKey,
-        providerId: params.providerId,
-        apiBaseUrl: prepared.apiBaseUrl,
-        prepareToken: prepared.prepareToken,
-        onUpdate: params.onUpdate ?? (() => {}),
-        onComplete: params.onComplete ?? (() => {}),
-        onFail: params.onFail ?? (() => {}),
-      })
-
-      return { taskId: providerTask.taskId, mode: 'direct' }
-    } catch (error) {
-      if (prepareToken && providerTaskId) {
-        try {
-          await failTask(providerTaskId, {
-            prepareToken,
-            errorMessage: '任务创建流程失败',
-          })
-        } catch {
-          // Let timeout guardian recover if rollback callback fails.
+      schedulePolling(response.data.taskId, (task) => {
+        const normalizedStatus = task.status === 'timeout' ? 'failed' : task.status
+        params.onUpdate?.({
+          status: normalizedStatus,
+          progress: task.progress,
+          outputUrl: task.outputUrl ?? undefined,
+          thumbnailUrl: task.thumbnailUrl ?? undefined,
+          errorMessage: task.errorMessage ?? undefined,
+        })
+        if (task.status === 'success') {
+          params.onComplete?.()
+        } else if (task.status === 'failed' || task.status === 'timeout') {
+          params.onFail?.(task.errorMessage ?? '任务生成失败')
         }
-      }
-      throw error
+      })
+
+      return { taskId: response.data.taskId, mode: 'direct' }
     } finally {
       isCreating.value = false
     }

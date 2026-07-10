@@ -90,18 +90,18 @@ describe('frontend api module', () => {
     expect(config.headers.Authorization).toBe('Bearer parent-token')
   })
 
-  it('uses an extended timeout for prepareTask to cover backend throttle delays', async () => {
+  it('creates provider tasks through the server-side task endpoint', async () => {
     mockBackendPost.mockResolvedValue({ data: { ok: true } })
 
-    const { prepareTask } = await import('../index')
+    const { createTask } = await import('../index')
 
-    await prepareTask({
+    await createTask({
       type: 'image_to_model',
       provider_id: 'tripo3d',
     })
 
     expect(mockBackendPost).toHaveBeenCalledWith(
-      '/tasks/prepare',
+      '/tasks',
       {
         type: 'image_to_model',
         provider_id: 'tripo3d',

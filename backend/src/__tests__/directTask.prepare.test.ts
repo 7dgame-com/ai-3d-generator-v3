@@ -62,7 +62,7 @@ describe('directTask.prepareTask', () => {
     mockSignPrepareToken.mockReturnValue('prepare-token-001');
   });
 
-  it('returns api credentials, prepare token and no-store headers after pre-deduct succeeds', async () => {
+  it('never returns provider credentials and returns a prepare token after pre-deduct succeeds', async () => {
     mockQuery
       .mockResolvedValueOnce([{ value: 'encrypted-api-key' }])
       .mockResolvedValueOnce([{ value: 'direct' }]);
@@ -93,7 +93,6 @@ describe('directTask.prepareTask', () => {
     );
     expect(payload.body).toEqual(
       expect.objectContaining({
-        apiKey: 'real-provider-api-key',
         prepareToken: 'prepare-token-001',
         providerId: 'tripo3d',
         apiBaseUrl: '/tripo',
@@ -101,6 +100,7 @@ describe('directTask.prepareTask', () => {
         mode: 'direct',
       })
     );
+    expect(payload.body).not.toHaveProperty('apiKey');
     expect(mockReserve).toHaveBeenCalledWith(
       7,
       'tripo3d',

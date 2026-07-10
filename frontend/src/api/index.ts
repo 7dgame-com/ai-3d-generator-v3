@@ -255,16 +255,6 @@ export interface Pagination {
   totalPages: number
 }
 
-export interface PrepareTaskResponse {
-  apiKey: string
-  prepareToken: string
-  providerId: string
-  estimatedPower: number
-  apiBaseUrl: string
-  modelVersion?: string
-  mode: 'direct' | 'proxy'
-}
-
 export interface CloudBucketConfig {
   bucket: string
   region?: string
@@ -326,34 +316,6 @@ export const downloadTaskBuffer = (taskId: string) =>
   backendApi.get<ArrayBuffer>(`/download/${taskId}`, { responseType: 'arraybuffer' })
 export const updateTaskResource = (taskId: string, resourceId: number) =>
   backendApi.put<{ success: boolean }>(`/tasks/${taskId}/resource`, { resource_id: resourceId })
-
-export const prepareTask = (payload: {
-  type: 'text_to_model' | 'image_to_model'
-  provider_id: string
-}) => backendApi.post<PrepareTaskResponse>('/tasks/prepare', payload, { timeout: 90000 })
-
-export const registerTask = (payload: {
-  prepareToken: string
-  taskId: string
-  type: 'text_to_model' | 'image_to_model'
-  prompt?: string
-  pollingKey?: string
-}) => backendApi.post<{ success: boolean }>('/tasks/register', payload)
-
-export const completeTask = (taskId: string, payload: {
-  prepareToken: string
-  outputUrl: string
-  thumbnailUrl?: string
-  creditCost: number
-}) => backendApi.post<{ success: boolean; billingStatus: 'settled' | 'undercharged'; billingMessage?: string }>(
-  `/tasks/${taskId}/complete`,
-  payload
-)
-
-export const failTask = (taskId: string, payload: {
-  prepareToken: string
-  errorMessage?: string
-}) => backendApi.post<{ success: boolean }>(`/tasks/${taskId}/fail`, payload)
 
 export const getAdminConfig = (providerId?: string) =>
   backendApi.get<{ configured: boolean; apiKeyMasked?: string; region?: 'ai' | 'com' }>('/admin/config', {
