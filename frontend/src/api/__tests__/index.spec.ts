@@ -90,18 +90,18 @@ describe('frontend api module', () => {
     expect(config.headers.Authorization).toBe('Bearer parent-token')
   })
 
-  it('uses an extended timeout for prepareTask to cover backend throttle delays', async () => {
+  it('creates provider tasks through the server-side task endpoint', async () => {
     mockBackendPost.mockResolvedValue({ data: { ok: true } })
 
-    const { prepareTask } = await import('../index')
+    const { createTask } = await import('../index')
 
-    await prepareTask({
+    await createTask({
       type: 'image_to_model',
       provider_id: 'tripo3d',
     })
 
     expect(mockBackendPost).toHaveBeenCalledWith(
-      '/tasks/prepare',
+      '/tasks',
       {
         type: 'image_to_model',
         provider_id: 'tripo3d',
@@ -124,7 +124,7 @@ describe('frontend api module', () => {
     expect(mockBackendGet).toHaveBeenCalledWith('/admin/quota/summary')
   })
 
-  it('updates the global default quota limit through the admin endpoint', async () => {
+  it('updates and resets global quota management through the admin endpoints', async () => {
     mockBackendPost.mockResolvedValue({ data: { success: true } })
     mockBackendPut.mockResolvedValue({ data: { success: true } })
 
@@ -136,15 +136,15 @@ describe('frontend api module', () => {
     } = await import('../index')
 
     await updateDefaultQuotaLimit(1200)
-    await resetQuotaUsage({ organization_id: 7 })
-    await resetUserQuotaUsage(42, { organization_id: 7 })
-    await getUserQuotas({ search: 'alice', page: 2, pageSize: 10, organization_id: 7 })
+    await resetQuotaUsage()
+    await resetUserQuotaUsage(42)
+    await getUserQuotas({ search: 'alice', page: 2, pageSize: 10 })
 
     expect(mockBackendPut).toHaveBeenCalledWith('/admin/quota/default-limit', { quota_limit: 1200 })
-    expect(mockBackendPost).toHaveBeenCalledWith('/admin/quota/reset-usage', { organization_id: 7 })
-    expect(mockBackendPost).toHaveBeenCalledWith('/admin/user-quotas/42/reset', { organization_id: 7 })
+    expect(mockBackendPost).toHaveBeenCalledWith('/admin/quota/reset-usage', {})
+    expect(mockBackendPost).toHaveBeenCalledWith('/admin/user-quotas/42/reset', {})
     expect(mockBackendGet).toHaveBeenCalledWith('/admin/user-quotas', {
-      params: { search: 'alice', page: 2, pageSize: 10, organization_id: 7 },
+      params: { search: 'alice', page: 2, pageSize: 10 },
     })
   })
 

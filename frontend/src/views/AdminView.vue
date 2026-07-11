@@ -92,7 +92,7 @@
       </div>
 
       <div class="quota-config">
-        <div v-if="isRootUser" class="quota-limit-control">
+        <div class="quota-limit-control">
           <span>{{ t('admin.defaultQuotaLimit') }}</span>
           <el-input-number
             v-model="quotaLimitDraft"
@@ -103,10 +103,6 @@
           <el-button type="primary" :loading="limitSaving" @click="saveDefaultLimit">
             {{ t('common.save') }}
           </el-button>
-        </div>
-        <div v-else class="quota-scope-badge">
-          <span>{{ t('admin.organizationQuotaScope') }}</span>
-          <strong>{{ quotaScopeLabel }}</strong>
         </div>
         <div class="quota-summary-strip">
           <article class="quota-kpi">
@@ -244,7 +240,6 @@ import {
   saveAdminConfig,
   updateDefaultQuotaLimit,
   type Pagination,
-  type QuotaOrganizationParams,
   type QuotaSummary,
   type UserQuotaItem,
 } from '../api'
@@ -261,9 +256,6 @@ interface AdminUsageSnapshot {
 const { t, locale } = useI18n()
 const {
   isRootUser,
-  currentOrganizationId,
-  currentOrganizationName,
-  currentOrganizationTitle,
 } = usePermissions()
 const providers = ref<string[]>([])
 const configs = reactive<Record<string, { configured: boolean; apiKeyMasked?: string; region?: 'ai' | 'com' }>>({})
@@ -296,20 +288,6 @@ const maxTrendPower = computed(() =>
 )
 const rankedUsers = computed(() => adminUsage.value?.userRanking ?? [])
 const trendRows = computed(() => adminUsage.value?.dailyTrend ?? [])
-const quotaScopeParams = computed<QuotaOrganizationParams>(() => {
-  const params: QuotaOrganizationParams = {}
-  if (currentOrganizationId.value !== null) {
-    params.organization_id = currentOrganizationId.value
-  } else if (currentOrganizationName.value) {
-    params.organization_name = currentOrganizationName.value
-  }
-  return params
-})
-const quotaScopeLabel = computed(() =>
-  currentOrganizationTitle.value
-    || currentOrganizationName.value
-    || t('admin.rootGlobalQuotaScope')
-)
 const summaryCards = computed(() => {
   const cards = [
     {
@@ -350,10 +328,6 @@ const summaryCards = computed(() => {
     },
   ]
 })
-
-function quotaRequestParams(): QuotaOrganizationParams {
-  return { ...quotaScopeParams.value }
-}
 
 async function loadProviderData() {
   if (!isRootUser.value) {
@@ -415,7 +389,7 @@ async function save(provider: string) {
 async function loadQuotaData() {
   quotaLoading.value = true
   try {
-    const summaryResponse = await getQuotaSummary(quotaRequestParams())
+    const summaryResponse = await getQuotaSummary()
     quotaSummary.value = summaryResponse.data.data
     quotaLimitDraft.value = quotaSummary.value.quota_limit
     if (isRootUser.value) {
@@ -432,10 +406,6 @@ async function loadQuotaData() {
 }
 
 async function saveDefaultLimit() {
-  if (!isRootUser.value) {
-    return
-  }
-
   limitSaving.value = true
   try {
     const response = await updateDefaultQuotaLimit(quotaLimitDraft.value)
@@ -467,7 +437,7 @@ async function resetAllUsage() {
 
   resetLoading.value = true
   try {
-    const response = await resetQuotaUsage(quotaRequestParams())
+    const response = await resetQuotaUsage()
     quotaSummary.value = response.data.data.summary
     quotaLimitDraft.value = quotaSummary.value.quota_limit
     ElMessage.success(t('admin.resetUsageSuccess', {
@@ -507,7 +477,7 @@ async function resetSingleUserUsage(row: UserQuotaItem) {
 
   resetUserLoadingId.value = row.id
   try {
-    const response = await resetUserQuotaUsage(row.id, quotaRequestParams())
+    const response = await resetUserQuotaUsage(row.id)
     quotaSummary.value = response.data.data.summary
     quotaLimitDraft.value = quotaSummary.value.quota_limit
     ElMessage.success(t('admin.resetSingleUserSuccess', {
@@ -537,7 +507,6 @@ async function loadUserQuotas(page = 1) {
       search: userSearch.value.trim() || undefined,
       page,
       pageSize: userQuotaPagination.value.pageSize,
-      ...quotaRequestParams(),
     })
     userQuotas.value = response.data.data
     userQuotaPagination.value = response.data.pagination

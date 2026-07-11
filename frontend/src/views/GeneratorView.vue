@@ -680,7 +680,8 @@ async function submitImage() {
   try {
     const response = await createDirectTask({
       type: 'image_to_model',
-      imageFile: sourceImageFile,
+      imageBase64: imageBase64.value ?? undefined,
+      mimeType: sourceImageFile.type || 'image/png',
       providerId: selectedProvider.value,
       onUpdate: (status) => {
         if (createdTaskId) {

@@ -1,10 +1,9 @@
 import { Response } from 'express';
 import { AuthenticatedRequest } from '../middleware/auth';
 import { activeQuotaTool } from '../services/quotaToolRegistry';
-import type { QuotaOrganizationScope } from '../services/quotaTool';
+import { buildQuotaUserSnapshot } from '../services/quotaUserSnapshot';
 
 interface QuotaAdminAccess {
-  organization: QuotaOrganizationScope | null;
   isRoot: boolean;
 }
 
@@ -26,53 +25,8 @@ function parsePositiveInteger(value: unknown): number | undefined {
   return Number.isInteger(parsed) && parsed > 0 ? parsed : undefined;
 }
 
-function normalizeText(value: unknown): string | undefined {
-  return typeof value === 'string' && value.trim().length > 0 ? value.trim() : undefined;
-}
-
-function comparableText(value: unknown): string {
-  return typeof value === 'string' ? value.trim().toLowerCase() : '';
-}
-
-function requestValue(req: AuthenticatedRequest, key: string): unknown {
-  const body = req.body as Record<string, unknown> | undefined;
-  const query = req.query as Record<string, unknown> | undefined;
-  return body?.[key] ?? query?.[key];
-}
-
-function resolveOrganizationScope(req: AuthenticatedRequest): QuotaOrganizationScope | null {
-  const id = parsePositiveInteger(requestValue(req, 'organization_id'));
-  const name = normalizeText(requestValue(req, 'organization_name'));
-  if (id === undefined && !name) {
-    return null;
-  }
-
-  return {
-    ...(id !== undefined ? { id } : {}),
-    ...(name ? { name } : {}),
-  };
-}
-
 function hasAnyRole(roles: readonly string[] | undefined, expected: readonly string[]): boolean {
   return Array.isArray(roles) && expected.some((role) => roles.includes(role));
-}
-
-function belongsToOrganization(req: AuthenticatedRequest, scope: QuotaOrganizationScope): boolean {
-  const organizations = Array.isArray(req.user.organizations) ? req.user.organizations : [];
-  return organizations.some((organization) => {
-    const actualId = parsePositiveInteger(organization.id);
-    if (scope.id !== undefined && actualId === scope.id) {
-      return true;
-    }
-
-    const expectedName = comparableText(scope.name);
-    if (!expectedName) {
-      return false;
-    }
-
-    return comparableText(organization.name) === expectedName
-      || comparableText(organization.title) === expectedName;
-  });
 }
 
 function resolveQuotaAdminAccess(
@@ -81,29 +35,14 @@ function resolveQuotaAdminAccess(
 ): QuotaAdminAccess | null {
   const roles = req.user.roles ?? [];
   const isRoot = hasAnyRole(roles, ['root']);
-  const isOrganizationManager = hasAnyRole(roles, ['admin', 'manager']);
-  const organization = resolveOrganizationScope(req);
+  const isQuotaManager = hasAnyRole(roles, ['admin', 'manager']);
 
-  if (isRoot) {
-    return { organization, isRoot: true };
-  }
-
-  if (!isOrganizationManager) {
+  if (!isRoot && !isQuotaManager) {
     res.status(403).json({ code: 2003, message: '没有权限执行此操作' });
     return null;
   }
 
-  if (!organization) {
-    res.status(422).json({ code: 4220, message: 'organization_id 或 organization_name 必须提供' });
-    return null;
-  }
-
-  if (!belongsToOrganization(req, organization)) {
-    res.status(403).json({ code: 2003, message: '不能管理非本组织账号' });
-    return null;
-  }
-
-  return { organization, isRoot: false };
+  return { isRoot };
 }
 
 function sendQuotaOperationError(res: Response, error: unknown): void {
@@ -128,7 +67,7 @@ export async function getQuotaStatusHandler(
   res: Response
 ): Promise<void> {
   try {
-    const status = await activeQuotaTool.getUserStatus(req.user.userId);
+    const status = await activeQuotaTool.getUserStatus(req.user.userId, buildQuotaUserSnapshot(req.user));
     res.json({ data: status });
   } catch (error) {
     console.error('[QuotaController] GET /credits/status error:', error);
@@ -146,7 +85,7 @@ export async function getQuotaSummaryHandler(
   }
 
   try {
-    const summary = await activeQuotaTool.getSummary(access.organization);
+    const summary = await activeQuotaTool.getSummary(null);
     res.json({ data: summary });
   } catch (error) {
     console.error('[QuotaController] GET /admin/quota/summary error:', error);
@@ -158,6 +97,10 @@ export async function updateDefaultLimitHandler(
   req: AuthenticatedRequest,
   res: Response
 ): Promise<void> {
+  if (!resolveQuotaAdminAccess(req, res)) {
+    return;
+  }
+
   const limit = normalizeLimit((req.body as { quota_limit?: unknown }).quota_limit);
   if (limit === null) {
     res.status(422).json({ code: 'INVALID_QUOTA_LIMIT', message: 'quota_limit 必须是大于等于 0 的数字' });
@@ -166,7 +109,7 @@ export async function updateDefaultLimitHandler(
 
   try {
     await activeQuotaTool.setDefaultLimit(limit);
-    const summary = await activeQuotaTool.getSummary();
+    const summary = await activeQuotaTool.getSummary(null);
     res.json({ success: true, data: summary });
   } catch (error) {
     console.error('[QuotaController] PUT /admin/quota/default-limit error:', error);
@@ -185,13 +128,11 @@ export async function resetUsageHandler(
 
   const note = typeof req.body?.note === 'string'
     ? req.body.note
-    : access.organization
-      ? `organization reset by user ${req.user.userId}`
-      : `admin reset by user ${req.user.userId}`;
+    : `admin reset by user ${req.user.userId}`;
 
   try {
-    const result = await activeQuotaTool.resetAllUsage(note, access.organization);
-    const summary = await activeQuotaTool.getSummary(access.organization);
+    const result = await activeQuotaTool.resetAllUsage(note, null);
+    const summary = await activeQuotaTool.getSummary(null);
     res.json({ success: true, data: { ...result, summary } });
   } catch (error) {
     console.error('[QuotaController] POST /admin/quota/reset-usage error:', error);
@@ -220,10 +161,10 @@ export async function resetUserUsageHandler(
 
   try {
     const result = await activeQuotaTool.resetUserUsage(userId, note, {
-      organization: access.organization,
+      organization: null,
       requireLearnerRole: true,
     });
-    const summary = await activeQuotaTool.getSummary(access.organization);
+    const summary = await activeQuotaTool.getSummary(null);
     res.json({ success: true, data: { ...result, summary } });
   } catch (error) {
     console.error('[QuotaController] POST /admin/user-quotas/:userId/reset error:', error);
@@ -249,7 +190,7 @@ export async function listUserQuotasHandler(
       page,
       pageSize,
       search,
-      organization: access.organization,
+      organization: null,
     });
 
     res.json({

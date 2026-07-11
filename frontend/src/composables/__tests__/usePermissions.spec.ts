@@ -70,7 +70,7 @@ describe('usePermissions role awareness', () => {
     expect(permissions.isRootUser.value).toBe(true)
   })
 
-  it('keeps the session non-root when verify-token omits the root role', async () => {
+  it('allows admin sessions to manage quotas without root access', async () => {
     mocks.fetchSession.mockImplementation(async () => {
       mocks.roles.value = ['admin']
       mocks.user.value = { roles: ['admin'], organizations: [] }
@@ -85,11 +85,11 @@ describe('usePermissions role awareness', () => {
 
     expect(permissions.can('generate-model')).toBe(true)
     expect(permissions.can('admin-config')).toBe(false)
-    expect(permissions.can('manage-quota')).toBe(false)
+    expect(permissions.can('manage-quota')).toBe(true)
     expect(permissions.isRootUser.value).toBe(false)
   })
 
-  it('allows same-organization admin and manager sessions to manage quotas', async () => {
+  it('tracks organization membership separately from quota management access', async () => {
     mocks.fetchSession.mockImplementation(async () => {
       mocks.roles.value = ['user', 'manager']
       mocks.user.value = {
@@ -99,8 +99,8 @@ describe('usePermissions role awareness', () => {
       mocks.loaded.value = true
       mocks.isRootUser.value = false
     })
-    mocks.currentOrganizationId.value = 7
-    mocks.currentOrganizationName.value = 'school-a'
+    mocks.currentOrganizationId.value = 12
+    mocks.currentOrganizationName.value = 'school-b'
     mocks.hasOrganizationContext.value = true
 
     const { usePermissions } = await import('../usePermissions')
@@ -110,6 +110,6 @@ describe('usePermissions role awareness', () => {
 
     expect(permissions.can('admin-config')).toBe(false)
     expect(permissions.can('manage-quota')).toBe(true)
-    expect(permissions.belongsToCurrentOrganization.value).toBe(true)
+    expect(permissions.belongsToCurrentOrganization.value).toBe(false)
   })
 })

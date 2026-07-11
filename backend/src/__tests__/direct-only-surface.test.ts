@@ -9,6 +9,7 @@ describe('direct-only backend surface', () => {
     );
 
     expect(routeSource).toContain("router.get('/', auth, listTasks);");
+    expect(routeSource).toContain("router.post('/', auth, createTask);");
     expect(routeSource).toContain("router.get('/:taskId/download-url', auth, getDownloadUrl);");
     expect(routeSource).toContain("router.get('/:taskId', auth, getTask);");
     expect(routeSource).toContain("router.put('/:taskId/resource', auth, updateTaskResource);");

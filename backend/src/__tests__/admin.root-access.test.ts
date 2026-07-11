@@ -49,7 +49,7 @@ describe('root-only admin access', () => {
     expect(next).toHaveBeenCalledTimes(1);
   });
 
-  it('wires requireRootUser into both admin route groups', () => {
+  it('wires requireRootUser into root-only provider admin routes while quota routes use scoped access', () => {
     const indexSource = fs.readFileSync(
       path.resolve(__dirname, '..', 'index.ts'),
       'utf8'
@@ -73,10 +73,11 @@ describe('root-only admin access', () => {
       adminRouteSource.indexOf("router.use('/admin'")
     );
     expect(adminRouteSource).not.toContain('requirePermission');
-    expect(creditsRouteSource).toContain('requireRootUser');
     expect(creditsRouteSource).toContain("router.get('/credits/status', auth, getQuotaStatusHandler as unknown as RequestHandler);");
     expect(creditsRouteSource).toContain("'/admin/quota/summary'");
+    expect(creditsRouteSource).toContain("'/admin/quota/default-limit'");
     expect(creditsRouteSource).toContain("'/admin/user-quotas'");
+    expect(creditsRouteSource).not.toContain('requireRootUser');
     expect(creditsRouteSource).not.toContain('requirePermission');
   });
 });
