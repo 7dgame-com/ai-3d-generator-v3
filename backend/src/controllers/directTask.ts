@@ -213,9 +213,10 @@ export async function prepareTask(req: Request, res: Response): Promise<void> {
     return;
   }
 
-  let apiKey: string;
   try {
-    apiKey = await getApiKey(providerId);
+    // Validate that the provider is configured, but never expose a long-lived
+    // provider credential to a browser client.
+    await getApiKey(providerId);
   } catch (error) {
     const typedError = error as { code?: string; status?: number; message?: string };
     res.status(typedError.status ?? 503).json({
@@ -267,7 +268,6 @@ export async function prepareTask(req: Request, res: Response): Promise<void> {
   res.set('Cache-Control', 'no-store');
   res.set('Pragma', 'no-cache');
   res.status(200).json({
-    apiKey,
     prepareToken,
     providerId,
     estimatedPower,

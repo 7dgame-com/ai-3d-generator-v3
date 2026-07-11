@@ -460,13 +460,15 @@ export class SimpleUserUsageQuotaTool implements QuotaTool {
     }
   }
 
-  async getUserStatus(userId: number): Promise<QuotaStatus> {
-    const limit = await this.getDefaultLimit();
+  async getUserStatus(userId: number, userSnapshot?: QuotaUserSnapshot): Promise<QuotaStatus> {
+    void userSnapshot;
     const [rows] = await pool.query<UsageRow[]>(
       'SELECT user_id, used_power, updated_at, user_snapshot FROM quota_user_usage WHERE user_id = ? LIMIT 1',
       [userId]
     );
-    return buildStatus(userId, limit, rows?.[0] ?? null);
+    const row = rows?.[0] ?? null;
+    const limit = await this.getDefaultLimit();
+    return buildStatus(userId, limit, row);
   }
 
   async getUserStatuses(userIds: number[]): Promise<Map<number, QuotaStatus>> {
@@ -486,7 +488,8 @@ export class SimpleUserUsageQuotaTool implements QuotaTool {
     const rowsByUserId = new Map(rows.map((row) => [Number(row.user_id), row]));
 
     for (const userId of uniqueUserIds) {
-      result.set(userId, buildStatus(userId, limit, rowsByUserId.get(userId) ?? null));
+      const row = rowsByUserId.get(userId) ?? null;
+      result.set(userId, buildStatus(userId, limit, row));
     }
     return result;
   }

@@ -32,8 +32,8 @@ describe('SimpleUserUsageQuotaTool', () => {
 
   it('treats users without usage rows as zero used power', async () => {
     mockPoolQuery
-      .mockResolvedValueOnce([[{ value: '100' }]])
-      .mockResolvedValueOnce([[]]);
+      .mockResolvedValueOnce([[]])
+      .mockResolvedValueOnce([[{ key: 'quota.default_limit_power', value: '100' }]]);
 
     const status = await tool.getUserStatus(7);
 
@@ -50,7 +50,7 @@ describe('SimpleUserUsageQuotaTool', () => {
   });
 
   it('rejects reservations that would exceed the default limit without creating a row', async () => {
-    mockPoolQuery.mockResolvedValueOnce([[{ value: '10' }]]);
+    mockPoolQuery.mockResolvedValueOnce([[{ key: 'quota.default_limit_power', value: '10' }]]);
     mockConnQuery.mockResolvedValueOnce([[]]);
 
     const result = await tool.reserve(7, 'tripo3d', 20, 'temp:7:1');
@@ -66,7 +66,7 @@ describe('SimpleUserUsageQuotaTool', () => {
   });
 
   it('creates a user usage row only after a successful reservation', async () => {
-    mockPoolQuery.mockResolvedValueOnce([[{ value: '100' }]]);
+    mockPoolQuery.mockResolvedValueOnce([[{ key: 'quota.default_limit_power', value: '100' }]]);
     mockConnQuery
       .mockResolvedValueOnce([[]])
       .mockResolvedValueOnce({ affectedRows: 1 })
@@ -108,9 +108,66 @@ describe('SimpleUserUsageQuotaTool', () => {
     expect(mockCommit).toHaveBeenCalledTimes(1);
   });
 
-  it('lists only users with usage records from the plugin quota table', async () => {
+  it('stores default limits in the global quota config', async () => {
+    await tool.setDefaultLimit(88.888);
+
+    expect(mockPoolQuery).toHaveBeenCalledWith(
+      expect.stringContaining('INSERT INTO system_config'),
+      ['quota.default_limit_power', '88.89']
+    );
+  });
+
+  it('uses the global limit for organization summaries', async () => {
     mockPoolQuery
       .mockResolvedValueOnce([[{ value: '100' }]])
+      .mockResolvedValueOnce([[
+        {
+          user_id: 8,
+          used_power: '10.00',
+          updated_at: new Date('2026-05-22T00:00:00.000Z'),
+          user_snapshot: JSON.stringify({
+            user_id: 8,
+            username: 'bob',
+            roles: ['user'],
+            organizations: [{ id: 7, name: 'school-a' }],
+          }),
+        },
+      ]]);
+
+    const summary = await tool.getSummary({ id: 7 });
+
+    expect(summary).toMatchObject({
+      quota_limit: 100,
+      used_user_count: 1,
+      total_used_power: 10,
+      total_remaining_power: 90,
+    });
+  });
+
+  it('applies the global limit when reserving user power with an organization snapshot', async () => {
+    mockPoolQuery.mockResolvedValueOnce([[{ value: '10' }]]);
+    mockConnQuery.mockResolvedValueOnce([[]]);
+
+    const result = await tool.reserve(7, 'tripo3d', 20, 'temp:7:1', {
+      user_id: 7,
+      username: 'alice',
+      roles: ['user'],
+      organizations: [{ id: 7, name: 'school-a' }],
+    });
+
+    expect(result).toEqual({
+      success: false,
+      errorCode: 'INSUFFICIENT_CREDITS',
+      usedPowerAfter: 0,
+      remainingPower: 10,
+    });
+    expect(mockConnQuery).toHaveBeenCalledTimes(1);
+    expect(mockRollback).toHaveBeenCalledTimes(1);
+  });
+
+  it('lists only users with usage records from the plugin quota table', async () => {
+    mockPoolQuery
+      .mockResolvedValueOnce([[{ key: 'quota.default_limit_power', value: '100' }]])
       .mockResolvedValueOnce([[{ total: 1 }]])
       .mockResolvedValueOnce([[
         {
@@ -154,7 +211,7 @@ describe('SimpleUserUsageQuotaTool', () => {
 
   it('lists usage rows inside the requested organization scope', async () => {
     mockPoolQuery
-      .mockResolvedValueOnce([[{ value: '100' }]])
+      .mockResolvedValueOnce([[{ key: 'quota.default_limit_power', value: '100' }]])
       .mockResolvedValueOnce([[
         {
           user_id: 7,

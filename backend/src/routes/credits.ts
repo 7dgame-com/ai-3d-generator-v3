@@ -2,16 +2,15 @@
  * Quota routes
  *
  * GET  /credits/status                 — auth（当前用户额度状态）
- * GET  /admin/quota/summary            — auth + root 或同组织 admin/manager
- * PUT  /admin/quota/default-limit      — auth + requireRootUser
- * POST /admin/quota/reset-usage        — auth + root 或同组织 admin/manager
- * POST /admin/user-quotas/:userId/reset — auth + root 或同组织 admin/manager
- * GET  /admin/user-quotas              — auth + root 或同组织 admin/manager
+ * GET  /admin/quota/summary            — auth + root 或 admin/manager
+ * PUT  /admin/quota/default-limit      — auth + root 或 admin/manager
+ * POST /admin/quota/reset-usage        — auth + root 或 admin/manager
+ * POST /admin/user-quotas/:userId/reset — auth + root 或 admin/manager
+ * GET  /admin/user-quotas              — auth + root 或 admin/manager
  */
 
 import { Router, RequestHandler } from 'express';
 import { auth } from '../middleware/auth';
-import { requireRootUser } from '../middleware/rootOnly';
 import {
   getQuotaStatusHandler,
   getQuotaSummaryHandler,
@@ -32,7 +31,6 @@ router.get(
 router.put(
   '/admin/quota/default-limit',
   auth,
-  requireRootUser,
   updateDefaultLimitHandler as unknown as RequestHandler
 );
 router.post(

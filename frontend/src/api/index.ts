@@ -248,26 +248,11 @@ export interface UserQuotaItem {
   quota: QuotaStatus | null
 }
 
-export interface QuotaOrganizationParams {
-  organization_id?: number
-  organization_name?: string
-}
-
 export interface Pagination {
   page: number
   pageSize: number
   total: number
   totalPages: number
-}
-
-export interface PrepareTaskResponse {
-  apiKey: string
-  prepareToken: string
-  providerId: string
-  estimatedPower: number
-  apiBaseUrl: string
-  modelVersion?: string
-  mode: 'direct' | 'proxy'
 }
 
 export interface CloudBucketConfig {
@@ -332,34 +317,6 @@ export const downloadTaskBuffer = (taskId: string) =>
 export const updateTaskResource = (taskId: string, resourceId: number) =>
   backendApi.put<{ success: boolean }>(`/tasks/${taskId}/resource`, { resource_id: resourceId })
 
-export const prepareTask = (payload: {
-  type: 'text_to_model' | 'image_to_model'
-  provider_id: string
-}) => backendApi.post<PrepareTaskResponse>('/tasks/prepare', payload, { timeout: 90000 })
-
-export const registerTask = (payload: {
-  prepareToken: string
-  taskId: string
-  type: 'text_to_model' | 'image_to_model'
-  prompt?: string
-  pollingKey?: string
-}) => backendApi.post<{ success: boolean }>('/tasks/register', payload)
-
-export const completeTask = (taskId: string, payload: {
-  prepareToken: string
-  outputUrl: string
-  thumbnailUrl?: string
-  creditCost: number
-}) => backendApi.post<{ success: boolean; billingStatus: 'settled' | 'undercharged'; billingMessage?: string }>(
-  `/tasks/${taskId}/complete`,
-  payload
-)
-
-export const failTask = (taskId: string, payload: {
-  prepareToken: string
-  errorMessage?: string
-}) => backendApi.post<{ success: boolean }>(`/tasks/${taskId}/fail`, payload)
-
 export const getAdminConfig = (providerId?: string) =>
   backendApi.get<{ configured: boolean; apiKeyMasked?: string; region?: 'ai' | 'com' }>('/admin/config', {
     params: providerId ? { provider_id: providerId } : undefined,
@@ -388,16 +345,15 @@ export const getCreditStatus = (providerId?: string) =>
     params: providerId ? { provider_id: providerId } : undefined,
   })
 
-export const getQuotaSummary = (params?: QuotaOrganizationParams) => params
-  ? backendApi.get<{ data: QuotaSummary }>('/admin/quota/summary', { params })
-  : backendApi.get<{ data: QuotaSummary }>('/admin/quota/summary')
+export const getQuotaSummary = () =>
+  backendApi.get<{ data: QuotaSummary }>('/admin/quota/summary')
 
 export const updateDefaultQuotaLimit = (quotaLimit: number) =>
   backendApi.put<{ success: boolean; data: QuotaSummary }>('/admin/quota/default-limit', {
     quota_limit: quotaLimit,
   })
 
-export const resetQuotaUsage = (payload?: { note?: string } & QuotaOrganizationParams) =>
+export const resetQuotaUsage = (payload?: { note?: string }) =>
   backendApi.post<{
     success: boolean
     data: { affectedUsers: number; clearedPower: number; summary: QuotaSummary }
@@ -405,7 +361,7 @@ export const resetQuotaUsage = (payload?: { note?: string } & QuotaOrganizationP
 
 export const resetUserQuotaUsage = (
   userId: number,
-  payload?: { note?: string } & QuotaOrganizationParams
+  payload?: { note?: string }
 ) =>
   backendApi.post<{
     success: boolean
@@ -416,7 +372,7 @@ export const getUserQuotas = (params?: {
   search?: string
   page?: number
   pageSize?: number
-} & QuotaOrganizationParams) =>
+}) =>
   backendApi.get<{ data: UserQuotaItem[]; pagination: Pagination }>('/admin/user-quotas', {
     params,
   })

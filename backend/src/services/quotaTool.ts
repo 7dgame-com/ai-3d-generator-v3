@@ -87,7 +87,7 @@ export interface QuotaTool {
     }
   ): Promise<{ affectedUsers: number; clearedPower: number }>;
 
-  getUserStatus(userId: number): Promise<QuotaStatus>;
+  getUserStatus(userId: number, userSnapshot?: QuotaUserSnapshot): Promise<QuotaStatus>;
   getUserStatuses(userIds: number[]): Promise<Map<number, QuotaStatus>>;
   listUsageStatuses(params: QuotaUsageListParams): Promise<QuotaUsageListResult>;
 

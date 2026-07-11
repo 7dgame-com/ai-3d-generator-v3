@@ -6,10 +6,13 @@
 
 import { Router } from 'express';
 import { auth } from '../middleware/auth';
-import { listTasks, getTask, getDownloadUrl, updateTaskResource } from '../controllers/task';
+import { createTask, listTasks, getTask, getDownloadUrl, updateTaskResource } from '../controllers/task';
 
 const router = Router();
 
+// Provider credentials stay on the server.  This is the canonical task
+// creation path; the worker polls the provider and settles billing afterwards.
+router.post('/', auth, createTask);
 router.get('/', auth, listTasks);
 
 // download-url must be registered before /:taskId to avoid param capture
