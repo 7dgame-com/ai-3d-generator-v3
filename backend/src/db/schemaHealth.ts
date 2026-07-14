@@ -10,6 +10,25 @@ export const REQUIRED_TABLES = [
   'schema_migrations',
   'quota_user_usage',
   'quota_usage_ledger',
+  'provider_runtime_config',
+  'provider_task_events',
+  'admin_audit_logs',
+] as const;
+
+export const REQUIRED_QUEUE_COLUMNS = [
+  'tasks.provider_task_id',
+  'tasks.request_payload',
+  'tasks.credential_scope',
+  'tasks.queue_entered_at',
+  'tasks.next_attempt_at',
+  'tasks.lease_owner',
+  'tasks.lease_expires_at',
+  'tasks.provider_slot_acquired_at',
+  'tasks.provider_slot_released_at',
+  'tasks.quota_epoch',
+  'tasks.reserved_power',
+  'quota_user_usage.quota_epoch',
+  'quota_usage_ledger.quota_epoch',
 ] as const;
 
 const BASE_REQUIRED_TABLES = ['tasks', 'credit_usage', 'system_config'] as const;
@@ -19,6 +38,7 @@ export interface SchemaStatus {
   tableCount: number;
   existingTables: string[];
   missingTables: string[];
+  missingColumns: string[];
   autoInitialized: boolean;
 }
 
@@ -31,7 +51,9 @@ export class SchemaHealthError extends Error {
     super(
       status.tableCount === 0
         ? '数据库 schema 未初始化'
-        : `数据库 schema 缺少表: ${status.missingTables.join(', ')}`
+        : status.missingTables.length > 0
+          ? `数据库 schema 缺少表: ${status.missingTables.join(', ')}`
+          : `数据库 schema 缺少队列字段: ${status.missingColumns.join(', ')}`
     );
     this.name = 'SchemaHealthError';
     this.statusDetails = status;
@@ -47,6 +69,7 @@ interface TableRow {
 }
 
 interface ColumnRow {
+  table_name?: string;
   column_name: string;
 }
 
@@ -88,12 +111,26 @@ export async function inspectSchema(autoInitialized = false): Promise<SchemaStat
   const existingTables = tableRows.map((row) => row.table_name);
   const existingTableSet = new Set(existingTables);
   const missingTables = REQUIRED_TABLES.filter((table) => !existingTableSet.has(table));
+  let missingColumns: string[] = [...REQUIRED_QUEUE_COLUMNS];
+  if (missingTables.length === 0) {
+    const columnRows = await query<Array<{ table_name: string; column_name: string }>>(
+      `SELECT TABLE_NAME AS table_name, COLUMN_NAME AS column_name
+       FROM information_schema.COLUMNS
+       WHERE TABLE_SCHEMA = DATABASE()
+         AND TABLE_NAME IN ('tasks', 'quota_user_usage', 'quota_usage_ledger')`
+    );
+    const existingColumns = new Set(
+      columnRows.map((row) => `${row.table_name}.${row.column_name}`)
+    );
+    missingColumns = REQUIRED_QUEUE_COLUMNS.filter((column) => !existingColumns.has(column));
+  }
 
   return {
     database,
     tableCount: existingTables.length,
     existingTables,
     missingTables,
+    missingColumns,
     autoInitialized,
   };
 }
@@ -477,6 +514,142 @@ async function ensureSimpleUserUsageQuotaSchema(connection: PoolConnection): Pro
   }
 }
 
+async function ensureUnifiedProviderQueueSchema(connection: PoolConnection): Promise<void> {
+  await connection.query("ALTER TABLE tasks MODIFY COLUMN status VARCHAR(32) NOT NULL DEFAULT 'waiting_provider'");
+
+  const taskColumns: Array<[string, string]> = [
+    ['provider_task_id', "provider_task_id VARCHAR(128) NULL COMMENT '供应商任务 ID' AFTER task_id"],
+    ['request_payload', "request_payload LONGTEXT NULL COMMENT '待派发供应商请求 JSON' AFTER provider_status_key"],
+    ['credential_scope', "credential_scope VARCHAR(64) NOT NULL DEFAULT 'default' AFTER provider_id"],
+    ['priority', 'priority INT NOT NULL DEFAULT 0 AFTER credential_scope'],
+    ['queue_entered_at', 'queue_entered_at DATETIME NULL AFTER priority'],
+    ['next_attempt_at', 'next_attempt_at DATETIME NULL AFTER queue_entered_at'],
+    ['attempt_count', 'attempt_count INT UNSIGNED NOT NULL DEFAULT 0 AFTER next_attempt_at'],
+    ['lease_owner', 'lease_owner VARCHAR(128) NULL AFTER attempt_count'],
+    ['lease_expires_at', 'lease_expires_at DATETIME NULL AFTER lease_owner'],
+    ['provider_slot_acquired_at', 'provider_slot_acquired_at DATETIME NULL AFTER lease_expires_at'],
+    ['provider_slot_released_at', 'provider_slot_released_at DATETIME NULL AFTER provider_slot_acquired_at'],
+    ['provider_error_category', 'provider_error_category VARCHAR(32) NULL AFTER provider_slot_released_at'],
+    ['provider_error_code', 'provider_error_code VARCHAR(64) NULL AFTER provider_error_category'],
+    ['provider_trace_id', 'provider_trace_id VARCHAR(128) NULL AFTER provider_error_code'],
+    ['retry_after_seconds', 'retry_after_seconds INT UNSIGNED NULL AFTER provider_trace_id'],
+    ['quota_epoch', 'quota_epoch INT UNSIGNED NOT NULL DEFAULT 1 AFTER retry_after_seconds'],
+    ['reserved_power', 'reserved_power DECIMAL(12,2) NOT NULL DEFAULT 0.00 AFTER quota_epoch'],
+    ['cancellation_reason', 'cancellation_reason VARCHAR(256) NULL AFTER reserved_power'],
+  ];
+  for (const [name, definition] of taskColumns) {
+    await ensureColumn(connection, 'tasks', name, definition);
+  }
+
+  await ensureColumn(
+    connection,
+    'quota_user_usage',
+    'quota_epoch',
+    "quota_epoch INT UNSIGNED NOT NULL DEFAULT 1 COMMENT '当前额度周期' AFTER user_id"
+  );
+  await ensureColumn(
+    connection,
+    'quota_usage_ledger',
+    'quota_epoch',
+    "quota_epoch INT UNSIGNED NOT NULL DEFAULT 1 COMMENT '额度周期' AFTER user_id"
+  );
+
+  await ensureIndex(
+    connection,
+    'tasks',
+    'idx_provider_queue',
+    '(provider_id, credential_scope, status, next_attempt_at, priority, queue_entered_at)'
+  );
+  await ensureIndex(
+    connection,
+    'tasks',
+    'idx_provider_slots',
+    '(provider_id, credential_scope, provider_slot_released_at, status)'
+  );
+  await ensureIndex(connection, 'tasks', 'idx_lease_expires', '(lease_expires_at)');
+
+  await connection.query(
+    `CREATE TABLE IF NOT EXISTS provider_runtime_config (
+      provider_id VARCHAR(32) NOT NULL,
+      credential_scope VARCHAR(64) NOT NULL DEFAULT 'default',
+      max_concurrency INT UNSIGNED NOT NULL,
+      paused TINYINT(1) NOT NULL DEFAULT 0,
+      pause_reason VARCHAR(256) NULL,
+      poll_interval_seconds INT UNSIGNED NOT NULL DEFAULT 3,
+      retry_limit INT UNSIGNED NOT NULL DEFAULT 6,
+      config_version INT UNSIGNED NOT NULL DEFAULT 1,
+      updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+      PRIMARY KEY (provider_id, credential_scope)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`
+  );
+  await connection.query(
+    `INSERT INTO provider_runtime_config (provider_id, credential_scope, max_concurrency)
+     VALUES ('tripo3d', 'default', 4), ('hyper3d', 'default', 1)
+     ON DUPLICATE KEY UPDATE provider_id = provider_id`
+  );
+
+  await connection.query(
+    `CREATE TABLE IF NOT EXISTS provider_task_events (
+      id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+      task_id VARCHAR(64) NOT NULL,
+      provider_id VARCHAR(32) NOT NULL,
+      event_type VARCHAR(64) NOT NULL,
+      from_status VARCHAR(32) NULL,
+      to_status VARCHAR(32) NULL,
+      attempt_count INT UNSIGNED NOT NULL DEFAULT 0,
+      trace_id VARCHAR(128) NULL,
+      detail_json JSON NULL,
+      created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      INDEX idx_provider_task_events_task (task_id, created_at),
+      INDEX idx_provider_task_events_provider (provider_id, created_at)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`
+  );
+
+  await connection.query(
+    `UPDATE tasks
+     SET provider_task_id = task_id,
+         queue_entered_at = COALESCE(queue_entered_at, created_at),
+         provider_slot_acquired_at = COALESCE(provider_slot_acquired_at, created_at)
+     WHERE provider_task_id IS NULL
+       AND status IN ('queued', 'processing', 'success', 'failed', 'timeout')`
+  );
+  await connection.query(
+    `UPDATE tasks
+     SET provider_slot_released_at = COALESCE(provider_slot_released_at, completed_at, NOW())
+     WHERE provider_slot_released_at IS NULL
+       AND status IN ('success', 'failed', 'timeout', 'cancelled')`
+  );
+}
+
+async function ensureP1AdminObservabilitySchema(connection: PoolConnection): Promise<void> {
+  await connection.query(
+    `CREATE TABLE IF NOT EXISTS admin_audit_logs (
+      id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+      actor_id INT UNSIGNED NULL,
+      action VARCHAR(64) NOT NULL,
+      target_type VARCHAR(64) NOT NULL,
+      target_id VARCHAR(128) NULL,
+      before_json JSON NULL,
+      after_json JSON NULL,
+      detail_json JSON NULL,
+      created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      INDEX idx_admin_audit_logs_created_at (created_at),
+      INDEX idx_admin_audit_logs_target (target_type, target_id, created_at)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`
+  );
+}
+
+async function ensureP2QueueAdmissionContentionSchema(connection: PoolConnection): Promise<void> {
+  // Keep the per-user admission check on a narrow index. Without this index a
+  // classroom burst can contend on broad task ranges before any provider call.
+  await ensureIndex(
+    connection,
+    'tasks',
+    'idx_user_provider_outstanding',
+    '(user_id, provider_id, status)'
+  );
+}
+
 export const SCHEMA_MIGRATIONS: readonly SchemaMigration[] = [
   {
     id: '20260428_direct_api_defaults',
@@ -492,6 +665,21 @@ export const SCHEMA_MIGRATIONS: readonly SchemaMigration[] = [
     id: '20260521_simple_user_usage_quota',
     description: 'Create per-user quota tables and retire wallet/pool quota tables',
     up: ensureSimpleUserUsageQuotaSchema,
+  },
+  {
+    id: '20260714_ai3d_unified_provider_queue',
+    description: 'Add persistent provider queue, runtime concurrency controls, and quota epochs',
+    up: ensureUnifiedProviderQueueSchema,
+  },
+  {
+    id: '20260714_ai3d_p1_admin_observability',
+    description: 'Add admin audit storage for provider queue operations and diagnostics',
+    up: ensureP1AdminObservabilitySchema,
+  },
+  {
+    id: '20260714_ai3d_p2_queue_admission_contention',
+    description: 'Add a narrow index for concurrent per-user queue admission',
+    up: ensureP2QueueAdmissionContentionSchema,
   },
 ] as const;
 
@@ -538,12 +726,12 @@ export async function ensureSchemaReady(env: NodeJS.ProcessEnv = process.env): P
 
   if (isAutoMigrateSchemaEnabled(env)) {
     const appliedMigrations = await runKnownSchemaMigrations();
-    if (appliedMigrations > 0 || status.missingTables.length > 0) {
+    if (appliedMigrations > 0 || status.missingTables.length > 0 || status.missingColumns.length > 0) {
       status = await inspectSchema(status.autoInitialized || appliedMigrations > 0);
     }
   }
 
-  if (status.missingTables.length === 0) {
+  if (status.missingTables.length === 0 && status.missingColumns.length === 0) {
     return status;
   }
 

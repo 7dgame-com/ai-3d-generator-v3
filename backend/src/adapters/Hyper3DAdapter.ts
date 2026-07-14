@@ -171,8 +171,9 @@ export class Hyper3DAdapter implements IProviderAdapter {
       if (!file) {
         renderWaitCounts.delete(taskId);
         return {
-          status: 'processing',
+          status: 'packaging',
           progress: 90,
+          providerWorkFinished: true,
         };
       }
 
@@ -197,8 +198,9 @@ export class Hyper3DAdapter implements IProviderAdapter {
             `[Hyper3DAdapter] glb ready but render.jpg not yet available, continuing poll (attempt ${nextWaitCount}/${MAX_RENDER_WAIT_POLLS})`
           );
           return {
-            status: 'processing',
+            status: 'packaging',
             progress: 95,
+            providerWorkFinished: true,
           };
         }
 
@@ -215,6 +217,7 @@ export class Hyper3DAdapter implements IProviderAdapter {
         creditCost: 0.5,
         outputUrl: file?.url,
         thumbnailUrl: renderThumbnail?.url ?? previewThumbnail?.url,
+        providerWorkFinished: true,
       };
     }
 

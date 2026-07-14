@@ -44,7 +44,13 @@ export function useDirectTaskCreation() {
     })
   }
 
-  async function createTask(params: DirectTaskCreationParams): Promise<{ taskId: string; mode: 'direct' }> {
+  async function createTask(params: DirectTaskCreationParams): Promise<{
+    taskId: string
+    providerId: string
+    status: Task['status']
+    queuePosition: number | null
+    mode: 'direct'
+  }> {
     isCreating.value = true
 
     try {
@@ -73,7 +79,13 @@ export function useDirectTaskCreation() {
         }
       })
 
-      return { taskId: response.data.taskId, mode: 'direct' }
+      return {
+        taskId: response.data.taskId,
+        providerId: response.data.providerId,
+        status: response.data.status,
+        queuePosition: response.data.queuePosition,
+        mode: 'direct',
+      }
     } finally {
       isCreating.value = false
     }

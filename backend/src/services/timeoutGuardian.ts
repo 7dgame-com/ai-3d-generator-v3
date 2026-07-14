@@ -30,9 +30,11 @@ export async function runTimeoutGuardianOnce(_now: Date = new Date()): Promise<{
   const rows = await query<TimedOutLedgerRow[]>(
     `SELECT l.user_id, l.provider_id, l.task_id
      FROM quota_usage_ledger l
+     INNER JOIN tasks t ON t.task_id = l.task_id
      WHERE l.event_type = 'pre_deduct'
        AND l.task_id IS NOT NULL
        AND l.created_at <= DATE_SUB(NOW(), INTERVAL ? SECOND)
+       AND t.status IN ('waiting_provider', 'retry_wait')
        AND NOT EXISTS (
          SELECT 1
          FROM quota_usage_ledger settled
@@ -51,7 +53,7 @@ export async function runTimeoutGuardianOnce(_now: Date = new Date()): Promise<{
     try {
       await activeQuotaTool.refund(row.user_id, row.provider_id, row.task_id);
       await query(
-        "UPDATE tasks SET status = 'timeout', error_message = '前端未及时回调，系统自动退款', completed_at = NOW() WHERE task_id = ? AND status IN ('queued', 'processing')",
+        "UPDATE tasks SET status = 'timeout', error_message = '排队超过安全等待时间，系统自动退款', completed_at = NOW(), provider_slot_released_at = COALESCE(provider_slot_released_at, NOW()) WHERE task_id = ? AND status IN ('waiting_provider', 'retry_wait')",
         [row.task_id]
       );
       refunded += 1;

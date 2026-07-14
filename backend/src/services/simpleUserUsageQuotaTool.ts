@@ -3,6 +3,7 @@ import { pool } from '../db/connection';
 import type {
   ConfirmDeductResult,
   QuotaReserveResult,
+  QuotaEnqueueInput,
   QuotaOrganizationScope,
   QuotaOrganizationSummary,
   QuotaStatus,
@@ -16,9 +17,11 @@ import type {
 
 const CONFIG_KEY_DEFAULT_LIMIT = 'quota.default_limit_power';
 const TOOL_ID: QuotaToolId = 'simple-user-usage-quota';
+const DEFAULT_QUEUE_ADMISSION_MAX_RETRIES = 6;
 
 interface UsageRow extends RowDataPacket {
   user_id: number;
+  quota_epoch: number;
   used_power: string | number;
   updated_at: Date | null;
   user_snapshot?: string | QuotaUserSnapshot | null;
@@ -35,6 +38,7 @@ interface CountRow extends RowDataPacket {
 interface TaskRowForBilling extends RowDataPacket {
   status: string;
   error_message: string | null;
+  quota_epoch: number;
 }
 
 export class QuotaScopeMismatchError extends Error {
@@ -64,6 +68,30 @@ function toNumber(value: unknown): number {
 
 function roundPower(value: number): number {
   return Math.round(value * 100) / 100;
+}
+
+function getQueueAdmissionMaxRetries(): number {
+  const configured = Number(process.env.AI3D_QUEUE_ADMISSION_MAX_RETRIES ?? DEFAULT_QUEUE_ADMISSION_MAX_RETRIES);
+  return Number.isInteger(configured) ? Math.max(1, Math.min(6, configured)) : DEFAULT_QUEUE_ADMISSION_MAX_RETRIES;
+}
+
+function isRetryableTransactionError(error: unknown): boolean {
+  const databaseError = error as { code?: string; errno?: number };
+  return databaseError?.code === 'ER_LOCK_DEADLOCK'
+    || databaseError?.code === 'ER_LOCK_WAIT_TIMEOUT'
+    || databaseError?.errno === 1213
+    || databaseError?.errno === 1205;
+}
+
+function admissionRetryDelayMs(attempt: number): number {
+  const exponentialBase = Math.min(250, 20 * (2 ** attempt));
+  // Different concurrent requests must not retry in lockstep, otherwise a
+  // classroom burst can reproduce the same InnoDB deadlock repeatedly.
+  return exponentialBase + Math.floor(Math.random() * exponentialBase);
+}
+
+function waitForAdmissionRetry(attempt: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, admissionRetryDelayMs(attempt)));
 }
 
 function normalizeLimit(value: unknown): number {
@@ -294,6 +322,7 @@ function buildStatus(userId: number, limit: number, row?: UsageRow | null): Quot
     user_id: userId,
     quota_limit: limit,
     used_power: usedPower,
+    quota_epoch: Number(row?.quota_epoch ?? 1),
     remaining_power: roundPower(Math.max(0, limit - usedPower)),
     has_record: !!row,
     updated_at: row?.updated_at ?? null,
@@ -384,13 +413,31 @@ export class SimpleUserUsageQuotaTool implements QuotaTool {
 
       await conn.query(
         `INSERT INTO quota_usage_ledger
-          (user_id, event_type, power_delta, used_power_after, note)
-         SELECT user_id, 'admin_reset', -used_power, 0, ?
+          (user_id, quota_epoch, event_type, power_delta, used_power_after, task_id, provider_id, power_cost, note)
+         SELECT t.user_id, t.quota_epoch, 'refund', 0, 0, t.task_id, t.provider_id, t.reserved_power,
+                'cancelled by admin reset; amount included in admin_reset'
+         FROM tasks t
+         WHERE t.status IN ('waiting_provider', 'retry_wait')
+           AND NOT EXISTS (
+             SELECT 1 FROM quota_usage_ledger settled
+             WHERE settled.user_id = t.user_id AND settled.provider_id = t.provider_id
+               AND settled.task_id = t.task_id AND settled.event_type IN ('refund', 'confirm_deduct')
+           )`
+      );
+      await conn.query(
+        `UPDATE tasks SET status = 'cancelled', completed_at = NOW(), cancellation_reason = 'admin_reset',
+            provider_slot_released_at = COALESCE(provider_slot_released_at, NOW())
+         WHERE status IN ('waiting_provider', 'retry_wait')`
+      );
+      await conn.query(
+        `INSERT INTO quota_usage_ledger
+          (user_id, quota_epoch, event_type, power_delta, used_power_after, note)
+         SELECT user_id, quota_epoch, 'admin_reset', -used_power, 0, ?
          FROM quota_user_usage
          WHERE used_power <> 0`,
         [note]
       );
-      await conn.query('UPDATE quota_user_usage SET used_power = 0');
+      await conn.query('UPDATE quota_user_usage SET used_power = 0, quota_epoch = quota_epoch + 1');
 
       await conn.commit();
       return { affectedUsers, clearedPower };
@@ -421,7 +468,7 @@ export class SimpleUserUsageQuotaTool implements QuotaTool {
       await conn.beginTransaction();
 
       const [rows] = await conn.query<UsageRow[]>(
-        'SELECT user_id, used_power, updated_at, user_snapshot FROM quota_user_usage WHERE user_id = ? FOR UPDATE',
+        'SELECT user_id, quota_epoch, used_power, updated_at, user_snapshot FROM quota_user_usage WHERE user_id = ? FOR UPDATE',
         [normalizedUserId]
       );
       const row = rows?.[0] ?? null;
@@ -439,16 +486,40 @@ export class SimpleUserUsageQuotaTool implements QuotaTool {
       }
 
       const clearedPower = roundPower(toNumber(row.used_power));
+      await conn.query(
+        `INSERT INTO quota_usage_ledger
+          (user_id, quota_epoch, event_type, power_delta, used_power_after, task_id, provider_id, power_cost, note)
+         SELECT t.user_id, t.quota_epoch, 'refund', 0, 0, t.task_id, t.provider_id, t.reserved_power,
+                'cancelled by admin reset; amount included in admin_reset'
+         FROM tasks t
+         WHERE t.user_id = ? AND t.status IN ('waiting_provider', 'retry_wait')
+           AND NOT EXISTS (
+             SELECT 1 FROM quota_usage_ledger settled
+             WHERE settled.user_id = t.user_id AND settled.provider_id = t.provider_id
+               AND settled.task_id = t.task_id AND settled.event_type IN ('refund', 'confirm_deduct')
+           )`,
+        [normalizedUserId]
+      );
+      await conn.query(
+        `UPDATE tasks SET status = 'cancelled', completed_at = NOW(), cancellation_reason = 'admin_reset',
+            provider_slot_released_at = COALESCE(provider_slot_released_at, NOW())
+         WHERE user_id = ? AND status IN ('waiting_provider', 'retry_wait')`,
+        [normalizedUserId]
+      );
       if (clearedPower !== 0) {
         await this.insertLedger(conn, {
           userId: normalizedUserId,
           eventType: 'admin_reset',
           powerDelta: -clearedPower,
           usedPowerAfter: 0,
+          quotaEpoch: Number(row.quota_epoch ?? 1),
           note,
         });
       }
-      await conn.query('UPDATE quota_user_usage SET used_power = 0 WHERE user_id = ?', [normalizedUserId]);
+      await conn.query(
+        'UPDATE quota_user_usage SET used_power = 0, quota_epoch = quota_epoch + 1 WHERE user_id = ?',
+        [normalizedUserId]
+      );
 
       await conn.commit();
       return { affectedUsers: 1, clearedPower };
@@ -463,7 +534,7 @@ export class SimpleUserUsageQuotaTool implements QuotaTool {
   async getUserStatus(userId: number, userSnapshot?: QuotaUserSnapshot): Promise<QuotaStatus> {
     void userSnapshot;
     const [rows] = await pool.query<UsageRow[]>(
-      'SELECT user_id, used_power, updated_at, user_snapshot FROM quota_user_usage WHERE user_id = ? LIMIT 1',
+      'SELECT user_id, quota_epoch, used_power, updated_at, user_snapshot FROM quota_user_usage WHERE user_id = ? LIMIT 1',
       [userId]
     );
     const row = rows?.[0] ?? null;
@@ -480,7 +551,7 @@ export class SimpleUserUsageQuotaTool implements QuotaTool {
 
     const limit = await this.getDefaultLimit();
     const [rows] = await pool.query<UsageRow[]>(
-      `SELECT user_id, used_power, updated_at, user_snapshot
+      `SELECT user_id, quota_epoch, used_power, updated_at, user_snapshot
        FROM quota_user_usage
        WHERE user_id IN (${uniqueUserIds.map(() => '?').join(', ')})`,
       uniqueUserIds
@@ -571,7 +642,7 @@ export class SimpleUserUsageQuotaTool implements QuotaTool {
 
   private async listRowsForOrganization(scope: QuotaOrganizationScope): Promise<UsageRow[]> {
     const [rows] = await pool.query<UsageRow[]>(
-      'SELECT user_id, used_power, updated_at, user_snapshot FROM quota_user_usage'
+      'SELECT user_id, quota_epoch, used_power, updated_at, user_snapshot FROM quota_user_usage'
     );
 
     return rows.filter((row) => snapshotBelongsToOrganization(parseUserSnapshot(row.user_snapshot), scope));
@@ -586,7 +657,7 @@ export class SimpleUserUsageQuotaTool implements QuotaTool {
       await conn.beginTransaction();
 
       const [rows] = await conn.query<UsageRow[]>(
-        'SELECT user_id, used_power, updated_at, user_snapshot FROM quota_user_usage FOR UPDATE'
+        'SELECT user_id, quota_epoch, used_power, updated_at, user_snapshot FROM quota_user_usage FOR UPDATE'
       );
       const scopedRows = rows.filter((row) => snapshotBelongsToOrganization(parseUserSnapshot(row.user_snapshot), scope));
       const userIds = scopedRows.map((row) => Number(row.user_id)).filter((id) => Number.isInteger(id) && id > 0);
@@ -597,15 +668,35 @@ export class SimpleUserUsageQuotaTool implements QuotaTool {
         const inClause = placeholders(userIds);
         await conn.query(
           `INSERT INTO quota_usage_ledger
-            (user_id, event_type, power_delta, used_power_after, note)
-           SELECT user_id, 'admin_reset', -used_power, 0, ?
+            (user_id, quota_epoch, event_type, power_delta, used_power_after, task_id, provider_id, power_cost, note)
+           SELECT t.user_id, t.quota_epoch, 'refund', 0, 0, t.task_id, t.provider_id, t.reserved_power,
+                  'cancelled by admin reset; amount included in admin_reset'
+           FROM tasks t
+           WHERE t.user_id IN (${inClause}) AND t.status IN ('waiting_provider', 'retry_wait')
+             AND NOT EXISTS (
+               SELECT 1 FROM quota_usage_ledger settled
+               WHERE settled.user_id = t.user_id AND settled.provider_id = t.provider_id
+                 AND settled.task_id = t.task_id AND settled.event_type IN ('refund', 'confirm_deduct')
+             )`,
+          userIds
+        );
+        await conn.query(
+          `UPDATE tasks SET status = 'cancelled', completed_at = NOW(), cancellation_reason = 'admin_reset',
+              provider_slot_released_at = COALESCE(provider_slot_released_at, NOW())
+           WHERE user_id IN (${inClause}) AND status IN ('waiting_provider', 'retry_wait')`,
+          userIds
+        );
+        await conn.query(
+          `INSERT INTO quota_usage_ledger
+            (user_id, quota_epoch, event_type, power_delta, used_power_after, note)
+           SELECT user_id, quota_epoch, 'admin_reset', -used_power, 0, ?
            FROM quota_user_usage
            WHERE user_id IN (${inClause})
              AND used_power <> 0`,
           [note, ...userIds]
         );
         await conn.query(
-          `UPDATE quota_user_usage SET used_power = 0 WHERE user_id IN (${inClause})`,
+          `UPDATE quota_user_usage SET used_power = 0, quota_epoch = quota_epoch + 1 WHERE user_id IN (${inClause})`,
           userIds
         );
       }
@@ -639,11 +730,12 @@ export class SimpleUserUsageQuotaTool implements QuotaTool {
     try {
       await conn.beginTransaction();
       const [rows] = await conn.query<UsageRow[]>(
-        'SELECT user_id, used_power, updated_at, user_snapshot FROM quota_user_usage WHERE user_id = ? FOR UPDATE',
+        'SELECT user_id, quota_epoch, used_power, updated_at, user_snapshot FROM quota_user_usage WHERE user_id = ? FOR UPDATE',
         [userId]
       );
 
       const currentUsedPower = roundPower(toNumber(rows?.[0]?.used_power));
+      const quotaEpoch = Number(rows?.[0]?.quota_epoch ?? 1);
       const nextUsedPower = roundPower(currentUsedPower + reserveAmount);
       if (nextUsedPower > limit) {
         await conn.rollback();
@@ -662,8 +754,8 @@ export class SimpleUserUsageQuotaTool implements QuotaTool {
         );
       } else {
         await conn.query(
-          'INSERT INTO quota_user_usage (user_id, used_power, user_snapshot) VALUES (?, ?, ?)',
-          [userId, nextUsedPower, snapshotJson]
+          'INSERT INTO quota_user_usage (user_id, quota_epoch, used_power, user_snapshot) VALUES (?, ?, ?, ?)',
+          [userId, quotaEpoch, nextUsedPower, snapshotJson]
         );
       }
 
@@ -675,6 +767,7 @@ export class SimpleUserUsageQuotaTool implements QuotaTool {
         taskId,
         providerId,
         powerCost: reserveAmount,
+        quotaEpoch,
       });
 
       await conn.commit();
@@ -682,6 +775,143 @@ export class SimpleUserUsageQuotaTool implements QuotaTool {
         success: true,
         usedPowerAfter: nextUsedPower,
         remainingPower: roundPower(Math.max(0, limit - nextUsedPower)),
+        quotaEpoch,
+      };
+    } catch (error) {
+      await conn.rollback();
+      throw error;
+    } finally {
+      conn.release();
+    }
+  }
+
+  async enqueueWithReservation(input: QuotaEnqueueInput): Promise<QuotaReserveResult> {
+    const maxRetries = getQueueAdmissionMaxRetries();
+    let lastRetryableError: unknown;
+    for (let attempt = 0; attempt < maxRetries; attempt += 1) {
+      try {
+        return await this.enqueueWithReservationOnce(input);
+      } catch (error) {
+        if (!isRetryableTransactionError(error) || attempt === maxRetries - 1) {
+          throw error;
+        }
+        lastRetryableError = error;
+        await waitForAdmissionRetry(attempt);
+      }
+    }
+    throw lastRetryableError ?? new Error('队列入队事务重试耗尽');
+  }
+
+  private async enqueueWithReservationOnce(input: QuotaEnqueueInput): Promise<QuotaReserveResult> {
+    const reserveAmount = roundPower(input.reservedPower);
+    const limit = await this.getDefaultLimit();
+    const snapshotJson = serializeUserSnapshot(input.userId, input.userSnapshot);
+    const conn = await pool.getConnection();
+    try {
+      await conn.beginTransaction();
+      const [usageRows] = await conn.query<UsageRow[]>(
+        'SELECT user_id, quota_epoch, used_power, updated_at, user_snapshot FROM quota_user_usage WHERE user_id = ? FOR UPDATE',
+        [input.userId]
+      );
+      const currentUsedPower = roundPower(toNumber(usageRows[0]?.used_power));
+      const quotaEpoch = Number(usageRows[0]?.quota_epoch ?? 1);
+      const nextUsedPower = roundPower(currentUsedPower + reserveAmount);
+      if (nextUsedPower > limit) {
+        await conn.rollback();
+        return {
+          success: false,
+          errorCode: 'INSUFFICIENT_CREDITS',
+          usedPowerAfter: currentUsedPower,
+          remainingPower: roundPower(Math.max(0, limit - currentUsedPower)),
+          quotaEpoch,
+        };
+      }
+
+      const [outstandingRows] = await conn.query<Array<RowDataPacket & { total: number | string }>>(
+        `SELECT COUNT(*) AS total FROM (
+           SELECT task_id
+           FROM tasks
+           WHERE user_id = ? AND provider_id = ?
+             AND status IN ('waiting_provider', 'retry_wait', 'submitting', 'queued', 'processing', 'packaging', 'provider_state_unknown')
+           UNION ALL
+           SELECT pending.task_id
+           FROM quota_usage_ledger pending
+           WHERE pending.user_id = ?
+             AND pending.provider_id = ?
+             AND pending.event_type = 'pre_deduct'
+             AND pending.task_id LIKE 'temp:%'
+             AND pending.created_at >= DATE_SUB(NOW(), INTERVAL 15 MINUTE)
+             AND NOT EXISTS (
+               SELECT 1 FROM quota_usage_ledger settled
+               WHERE settled.user_id = pending.user_id
+                 AND settled.provider_id = pending.provider_id
+                 AND settled.task_id = pending.task_id
+                 AND settled.event_type IN ('refund', 'confirm_deduct')
+             )
+         ) AS outstanding`,
+        [input.userId, input.providerId, input.userId, input.providerId]
+      );
+      if (Number(outstandingRows[0]?.total ?? 0) >= input.outstandingLimit) {
+        await conn.rollback();
+        return {
+          success: false,
+          errorCode: 'CONCURRENT_CONFLICT',
+          usedPowerAfter: currentUsedPower,
+          remainingPower: roundPower(Math.max(0, limit - currentUsedPower)),
+          quotaEpoch,
+        };
+      }
+
+      if (usageRows.length > 0) {
+        await conn.query(
+          'UPDATE quota_user_usage SET used_power = ?, user_snapshot = COALESCE(?, user_snapshot) WHERE user_id = ?',
+          [nextUsedPower, snapshotJson, input.userId]
+        );
+      } else {
+        await conn.query(
+          'INSERT INTO quota_user_usage (user_id, quota_epoch, used_power, user_snapshot) VALUES (?, ?, ?, ?)',
+          [input.userId, quotaEpoch, nextUsedPower, snapshotJson]
+        );
+      }
+
+      await conn.query(
+        `INSERT INTO tasks
+          (task_id, user_id, provider_id, credential_scope, type, prompt, status, progress,
+           request_payload, queue_entered_at, quota_epoch, reserved_power)
+         VALUES (?, ?, ?, 'default', ?, ?, 'waiting_provider', 0, ?, NOW(), ?, ?)`,
+        [
+          input.taskId,
+          input.userId,
+          input.providerId,
+          input.type,
+          input.prompt ?? null,
+          input.requestPayload,
+          quotaEpoch,
+          reserveAmount,
+        ]
+      );
+      await this.insertLedger(conn, {
+        userId: input.userId,
+        quotaEpoch,
+        eventType: 'pre_deduct',
+        powerDelta: reserveAmount,
+        usedPowerAfter: nextUsedPower,
+        taskId: input.taskId,
+        providerId: input.providerId,
+        powerCost: reserveAmount,
+      });
+      await conn.query(
+        `INSERT INTO provider_task_events
+          (task_id, provider_id, event_type, from_status, to_status, detail_json)
+         VALUES (?, ?, 'task_enqueued', NULL, 'waiting_provider', ?)`,
+        [input.taskId, input.providerId, JSON.stringify({ reservedPower: reserveAmount, quotaEpoch })]
+      );
+      await conn.commit();
+      return {
+        success: true,
+        usedPowerAfter: nextUsedPower,
+        remainingPower: roundPower(Math.max(0, limit - nextUsedPower)),
+        quotaEpoch,
       };
     } catch (error) {
       await conn.rollback();
@@ -695,6 +925,12 @@ export class SimpleUserUsageQuotaTool implements QuotaTool {
     const conn = await pool.getConnection();
     try {
       await conn.beginTransaction();
+
+      const [taskRows] = await conn.query<Array<RowDataPacket & { quota_epoch: number }>>(
+        'SELECT quota_epoch FROM tasks WHERE task_id = ? LIMIT 1',
+        [taskId]
+      );
+      const quotaEpoch = Number(taskRows?.[0]?.quota_epoch ?? 1);
 
       const [alreadySettledRows] = await conn.query<RowDataPacket[]>(
         `SELECT id
@@ -717,7 +953,7 @@ export class SimpleUserUsageQuotaTool implements QuotaTool {
         return;
       }
 
-      const usedPowerAfter = await this.applyUsageDelta(conn, userId, -preDeducted);
+      const usedPowerAfter = await this.applyUsageDelta(conn, userId, -preDeducted, quotaEpoch);
       await this.insertLedger(conn, {
         userId,
         eventType: 'refund',
@@ -726,6 +962,7 @@ export class SimpleUserUsageQuotaTool implements QuotaTool {
         taskId,
         providerId,
         powerCost: preDeducted,
+        quotaEpoch,
       });
 
       await conn.commit();
@@ -752,7 +989,7 @@ export class SimpleUserUsageQuotaTool implements QuotaTool {
       await conn.beginTransaction();
 
       const [taskRows] = await conn.query<TaskRowForBilling[]>(
-        `SELECT status, error_message
+        `SELECT status, error_message, quota_epoch
          FROM tasks
          WHERE task_id = ?
          FOR UPDATE`,
@@ -776,7 +1013,7 @@ export class SimpleUserUsageQuotaTool implements QuotaTool {
       const diff = roundPower(actualPowerCost - preDeducted);
       const usedPowerAfter = diff === 0
         ? await this.getCurrentUsedPower(conn, userId)
-        : await this.applyUsageDelta(conn, userId, diff);
+        : await this.applyUsageDelta(conn, userId, diff, Number(task.quota_epoch ?? 1));
 
       await this.insertLedger(conn, {
         userId,
@@ -788,6 +1025,7 @@ export class SimpleUserUsageQuotaTool implements QuotaTool {
         providerCreditCost: creditCost,
         powerCost: actualPowerCost,
         note: `actual=${actualPowerCost},pre=${preDeducted}`,
+        quotaEpoch: Number(task.quota_epoch ?? 1),
       });
 
       await conn.query(
@@ -822,7 +1060,7 @@ export class SimpleUserUsageQuotaTool implements QuotaTool {
     userId: number
   ): Promise<number> {
     const [rows] = await conn.query<UsageRow[]>(
-      'SELECT user_id, used_power, updated_at, user_snapshot FROM quota_user_usage WHERE user_id = ? FOR UPDATE',
+      'SELECT user_id, quota_epoch, used_power, updated_at, user_snapshot FROM quota_user_usage WHERE user_id = ? FOR UPDATE',
       [userId]
     );
     return roundPower(toNumber(rows?.[0]?.used_power));
@@ -831,13 +1069,17 @@ export class SimpleUserUsageQuotaTool implements QuotaTool {
   private async applyUsageDelta(
     conn: Pick<PoolConnection, 'query'>,
     userId: number,
-    delta: number
+    delta: number,
+    quotaEpoch?: number
   ): Promise<number> {
     const [rows] = await conn.query<UsageRow[]>(
-      'SELECT user_id, used_power, updated_at, user_snapshot FROM quota_user_usage WHERE user_id = ? FOR UPDATE',
+      'SELECT user_id, quota_epoch, used_power, updated_at, user_snapshot FROM quota_user_usage WHERE user_id = ? FOR UPDATE',
       [userId]
     );
     const currentUsedPower = roundPower(toNumber(rows?.[0]?.used_power));
+    if (quotaEpoch !== undefined && rows.length > 0 && Number(rows[0].quota_epoch ?? 1) !== quotaEpoch) {
+      return currentUsedPower;
+    }
     const nextUsedPower = roundPower(Math.max(0, currentUsedPower + delta));
 
     if (rows.length > 0) {
@@ -885,15 +1127,17 @@ export class SimpleUserUsageQuotaTool implements QuotaTool {
       providerCreditCost?: number;
       powerCost?: number;
       note?: string | null;
+      quotaEpoch?: number;
     }
   ): Promise<void> {
     await conn.query(
       `INSERT INTO quota_usage_ledger
-        (user_id, event_type, power_delta, used_power_after, task_id, provider_id,
+        (user_id, quota_epoch, event_type, power_delta, used_power_after, task_id, provider_id,
          provider_credit_cost, power_cost, note)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
         input.userId,
+        input.quotaEpoch ?? 1,
         input.eventType,
         roundPower(input.powerDelta),
         roundPower(input.usedPowerAfter),

@@ -87,8 +87,9 @@ describe('provider thumbnail extraction', () => {
     const result = await adapter.getTaskStatus('api-key', 'task-hyper-1');
 
     expect(result).toEqual({
-      status: 'processing',
+      status: 'packaging',
       progress: 95,
+      providerWorkFinished: true,
     });
   });
 

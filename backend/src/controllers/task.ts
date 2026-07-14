@@ -1,13 +1,13 @@
 import { Request, Response } from 'express';
+import { randomUUID } from 'node:crypto';
 import { query } from '../db/connection';
 import { creditToPower, getEstimatedCreditCost } from '../config/providers';
-import { decrypt } from '../services/crypto';
-import { addTaskToPoller } from '../services/taskPoller';
 import { AuthenticatedRequest } from '../middleware/auth';
 import { activeQuotaTool } from '../services/quotaToolRegistry';
-import { type QuotaReserveResult } from '../services/quotaTool';
 import { buildQuotaUserSnapshot } from '../services/quotaUserSnapshot';
 import { providerRegistry } from '../adapters/ProviderRegistry';
+import { getEstimatedWaitSeconds, getQueuePosition, wakeProviderDispatcher } from '../services/providerQueue';
+import { isQueueDispatchEnabled, isUnifiedQueueEnabledForUser } from '../services/queueRollout';
 import { computeExpiresAt, isDownloadExpired } from '../utils/urlExpiry';
 import { normalizeTaskBilling } from '../utils/taskBilling';
 const DIRECT_PROVIDER_STATUS_KEY_PREFIX = 'direct:';
@@ -47,6 +47,23 @@ function toMysqlDateTime(date: Date): string {
   return date.toISOString().slice(0, 19).replace('T', ' ');
 }
 
+function safeStudentErrorMessage(category: unknown, fallback: unknown): string | null {
+  const safeMessages: Record<string, string> = {
+    THROTTLED: '供应商繁忙，平台将自动重试',
+    TEMPORARY: '供应商暂时不可用，平台将自动重试',
+    SUBMISSION_UNKNOWN: '正在核对供应商任务状态，请勿重复提交',
+    NO_BALANCE: '供应商账号暂不可用，管理员处理后将继续',
+    NO_ACCESS: '供应商账号暂不可用，管理员处理后将继续',
+    INVALID_INPUT: '任务参数无法被供应商处理，请修改后重试',
+    CONTENT_REJECTED: '任务内容未通过供应商检查，请修改后重试',
+    PROVIDER_FAILED: '生成失败，请稍后重试',
+  };
+  if (typeof category === 'string' && safeMessages[category]) {
+    return safeMessages[category];
+  }
+  return typeof fallback === 'string' ? fallback.slice(0, 256) : null;
+}
+
 function buildEnabledProviderFilter(): { clause: string; params: string[] } | null {
   const providerIds = providerRegistry.getEnabledIds();
   if (providerIds.length === 0) {
@@ -84,18 +101,6 @@ async function backfillMissingExpiresAtForUser(userId: number): Promise<void> {
   }
 }
 
-async function getApiKey(providerId: string): Promise<string> {
-  const configKey = `${providerId}_api_key`;
-  const rows = await query<Array<{ value: string }>>(
-    'SELECT `value` FROM system_config WHERE `key` = ? LIMIT 1',
-    [configKey]
-  );
-  if (!rows || rows.length === 0) {
-    throw Object.assign(new Error('API Key 未配置'), { code: 'PROVIDER_NOT_CONFIGURED', status: 503 });
-  }
-  return decrypt(rows[0].value);
-}
-
 export async function createTask(req: Request, res: Response): Promise<void> {
   const userId = (req as AuthenticatedRequest).user.userId;
   const { type, prompt, imageBase64, mimeType, provider_id: rawProviderId } = req.body as {
@@ -104,13 +109,26 @@ export async function createTask(req: Request, res: Response): Promise<void> {
 
   const providerId = rawProviderId ?? providerRegistry.getDefaultId();
 
+  if (!isUnifiedQueueEnabledForUser(userId)) {
+    res.status(409).json({
+      code: 'UNIFIED_QUEUE_NOT_ENABLED_FOR_USER',
+      message: '当前账号尚未开启统一队列，请使用当前发布版本的创建入口',
+    });
+    return;
+  }
+  if (!isQueueDispatchEnabled()) {
+    res.status(503).json({
+      code: 'UNIFIED_QUEUE_DISPATCH_PAUSED',
+      message: '统一队列正在维护，暂不接收新任务',
+    });
+    return;
+  }
+
   // Validate provider_id
   if (!providerId || !providerRegistry.isEnabled(providerId)) {
     res.status(422).json({ code: 'INVALID_PROVIDER', message: '无效或未启用的服务提供商' });
     return;
   }
-
-  const adapter = providerRegistry.get(providerId)!;
 
   if (!type || !['text_to_model', 'image_to_model'].includes(type)) {
     res.status(422).json({ code: 4001, message: '参数错误', errors: ['type 无效'] });
@@ -127,96 +145,46 @@ export async function createTask(req: Request, res: Response): Promise<void> {
     return;
   }
 
-  let apiKey: string;
-  try {
-    apiKey = await getApiKey(providerId);
-  } catch (err) {
-    const e = err as { code?: string; status?: number; message?: string };
-    res.status(e.status ?? 503).json({ code: e.code ?? 'PROVIDER_NOT_CONFIGURED', message: e.message ?? 'API Key 未配置' });
-    return;
-  }
-
-  // Pre-deduct usage BEFORE calling provider API.
-  let preDeductResult: QuotaReserveResult | null = null;
+  const outstandingLimit = Math.max(1, Number(process.env.USER_PROVIDER_OUTSTANDING_LIMIT ?? 1));
   const estimatedCreditCost = getEstimatedCreditCost(providerId);
   const estimatedPower = creditToPower(providerId, estimatedCreditCost);
-  // Use a temp taskId for pre-deduction; will be updated after provider returns real task_id.
-  const tempTaskId = `temp:${userId}:${Date.now()}`;
+  const localTaskId = randomUUID();
   try {
-    preDeductResult = await activeQuotaTool.reserve(
+    const reserveResult = await activeQuotaTool.enqueueWithReservation({
+      taskId: localTaskId,
       userId,
       providerId,
-      estimatedPower,
-      tempTaskId,
-      buildQuotaUserSnapshot((req as AuthenticatedRequest).user)
-    );
-    if (!preDeductResult.success) {
-      if (preDeductResult.errorCode === 'INSUFFICIENT_CREDITS') {
+      type: type as 'text_to_model' | 'image_to_model',
+      prompt: prompt ?? null,
+      requestPayload: JSON.stringify({ type, prompt, imageBase64, mimeType }),
+      reservedPower: estimatedPower,
+      outstandingLimit,
+      userSnapshot: buildQuotaUserSnapshot((req as AuthenticatedRequest).user),
+    });
+    if (!reserveResult.success) {
+      if (reserveResult.errorCode === 'INSUFFICIENT_CREDITS') {
         res.status(422).json({ code: 'INSUFFICIENT_CREDITS', message: '额度不足' });
-      } else if (preDeductResult.errorCode === 'CONCURRENT_CONFLICT') {
-        res.status(409).json({ code: 'CONCURRENT_CONFLICT', message: '并发冲突，请重试' });
+      } else if (reserveResult.errorCode === 'CONCURRENT_CONFLICT') {
+        res.status(409).json({ code: 'OUTSTANDING_TASK_LIMIT', message: '已有任务正在排队或生成，请勿重复提交' });
       } else {
         res.status(422).json({ code: 'INSUFFICIENT_CREDITS', message: '额度不足' });
       }
       return;
     }
   } catch (err) {
-    console.error('[TaskController] 预扣额度失败:', err);
+    console.error('[TaskController] 原子入队失败:', err);
     res.status(500).json({ code: 5001, message: '服务器内部错误' });
     return;
   }
 
-  let providerTaskId: string;
-  try {
-    const result = await adapter.createTask(apiKey, { type: type as 'text_to_model' | 'image_to_model', prompt, imageBase64, mimeType });
-    providerTaskId = result.taskId;
-    const providerStatusKey = result.pollingKey ?? providerTaskId;
-
-    try {
-      await query(
-        "INSERT INTO tasks (task_id, provider_status_key, user_id, provider_id, type, prompt, status, progress) VALUES (?, ?, ?, ?, ?, ?, 'queued', 0)",
-        [providerTaskId, providerStatusKey, userId, providerId, type, prompt ?? null]
-      );
-    } catch (err) {
-      console.error('[TaskController] DB insert error:', err);
-      if (preDeductResult?.success) {
-        try {
-          await activeQuotaTool.refund(userId, providerId, tempTaskId);
-        } catch (refundErr) {
-          console.error('[TaskController] DB insert 失败后的退款失败:', (refundErr as Error).message);
-        }
-      }
-      res.status(500).json({ code: 5001, message: '服务器内部错误' });
-      return;
-    }
-  } catch (err) {
-    // Provider call failed — refund the pre-deduction if it was made
-    if (preDeductResult?.success) {
-      try {
-        await activeQuotaTool.refund(userId, providerId, tempTaskId);
-      } catch (refundErr) {
-        console.error('[TaskController] 退款失败 (tempTaskId):', (refundErr as Error).message);
-      }
-    }
-    const e = err as { message?: string };
-    res.status(502).json({ code: 'PROVIDER_UNAVAILABLE', message: 'AI 服务暂时不可用', detail: e.message ?? String(err) });
-    return;
-  }
-
-  // Update the ledger record's task_id from tempTaskId to the real provider task_id
-  if (preDeductResult?.success) {
-    try {
-      await query(
-        "UPDATE quota_usage_ledger SET task_id = ? WHERE user_id = ? AND task_id = ? AND provider_id = ? AND event_type = 'pre_deduct'",
-        [providerTaskId, userId, tempTaskId, providerId]
-      );
-    } catch (err) {
-      console.error('[TaskController] 更新 ledger task_id 失败:', (err as Error).message);
-    }
-  }
-
-  addTaskToPoller(providerTaskId);
-  res.status(201).json({ taskId: providerTaskId, status: 'queued' });
+  const queuePosition = await getQueuePosition(localTaskId, providerId).catch(() => null);
+  wakeProviderDispatcher();
+  res.status(202).json({
+    taskId: localTaskId,
+    status: 'waiting_provider',
+    providerId,
+    queuePosition,
+  });
 }
 
 export async function listTasks(req: Request, res: Response): Promise<void> {
@@ -234,7 +202,7 @@ export async function listTasks(req: Request, res: Response): Promise<void> {
     }
 
     const rows = await query<Array<Record<string, unknown>>>(
-      `SELECT task_id, provider_id, provider_status_key, type, prompt, status, progress, credit_cost, power_cost, file_size, output_url, thumbnail_url, resource_id, error_message, created_at, completed_at, expires_at
+      `SELECT task_id, provider_id, provider_status_key, type, prompt, status, progress, credit_cost, power_cost, file_size, output_url, thumbnail_url, resource_id, error_message, provider_error_category, queue_entered_at, next_attempt_at, created_at, completed_at, expires_at
        FROM tasks
        WHERE user_id = ?
          AND ${providerFilter.clause}
@@ -251,8 +219,7 @@ export async function listTasks(req: Request, res: Response): Promise<void> {
          AND (${LIST_VISIBLE_TASKS_PREDICATE})`,
       [userId, ...providerFilter.params]
     );
-    res.json({
-      data: rows.map((row) => {
+    const data = await Promise.all(rows.map(async (row) => {
         const downloadExpired = row.status === 'success'
           ? isDownloadExpired(row.output_url as string | null, row.completed_at as string | null)
           : false;
@@ -265,6 +232,7 @@ export async function listTasks(req: Request, res: Response): Promise<void> {
           powerCost: row.power_cost,
           status: String(row.status),
         });
+        const waiting = row.status === 'waiting_provider' || row.status === 'retry_wait';
         return {
           taskId: row.task_id,
           providerId: row.provider_id,
@@ -280,13 +248,25 @@ export async function listTasks(req: Request, res: Response): Promise<void> {
           thumbnailExpired,
           directModeTask: typeof row.provider_status_key === 'string' && row.provider_status_key.startsWith(DIRECT_PROVIDER_STATUS_KEY_PREFIX),
           resourceId: row.resource_id,
-          errorMessage: row.error_message,
+          errorMessage: safeStudentErrorMessage(row.provider_error_category, row.error_message),
+          errorCategory: row.provider_error_category ?? null,
+          queuePosition: waiting
+            ? await getQueuePosition(String(row.task_id), String(row.provider_id)).catch(() => null)
+            : null,
+          estimatedWaitSeconds: waiting
+            ? await getEstimatedWaitSeconds(String(row.task_id), String(row.provider_id)).catch(() => null)
+            : null,
+          nextAttemptAt: serializeOptionalDate(row.next_attempt_at),
+          canCancel: waiting,
+          queueEnteredAt: serializeOptionalDate(row.queue_entered_at),
           createdAt: row.created_at,
           completedAt: row.completed_at,
           expiresAt: serializeOptionalDate(row.expires_at),
           downloadExpired,
         };
-      }),
+      }));
+    res.json({
+      data,
       total: Number(countRows[0]?.total ?? 0),
       page,
       pageSize,
@@ -308,7 +288,7 @@ export async function getTask(req: Request, res: Response): Promise<void> {
     }
 
     const rows = await query<Array<Record<string, unknown>>>(
-      `SELECT task_id, provider_id, provider_status_key, type, prompt, status, progress, credit_cost, power_cost, file_size, output_url, thumbnail_url, resource_id, error_message, created_at, completed_at, expires_at
+      `SELECT task_id, provider_id, provider_status_key, type, prompt, status, progress, credit_cost, power_cost, file_size, output_url, thumbnail_url, resource_id, error_message, provider_error_category, queue_entered_at, next_attempt_at, created_at, completed_at, expires_at
        FROM tasks
        WHERE task_id = ?
          AND user_id = ?
@@ -330,6 +310,7 @@ export async function getTask(req: Request, res: Response): Promise<void> {
       powerCost: row.power_cost,
       status: String(row.status),
     });
+    const waiting = row.status === 'waiting_provider' || row.status === 'retry_wait';
     res.json({
       taskId: row.task_id,
       providerId: row.provider_id,
@@ -346,12 +327,69 @@ export async function getTask(req: Request, res: Response): Promise<void> {
       directModeTask: typeof row.provider_status_key === 'string' && row.provider_status_key.startsWith(DIRECT_PROVIDER_STATUS_KEY_PREFIX),
       downloadExpired,
       resourceId: row.resource_id,
-      errorMessage: row.error_message,
+      errorMessage: safeStudentErrorMessage(row.provider_error_category, row.error_message),
+      errorCategory: row.provider_error_category ?? null,
+      queuePosition: waiting
+        ? await getQueuePosition(String(row.task_id), String(row.provider_id)).catch(() => null)
+        : null,
+      estimatedWaitSeconds: waiting
+        ? await getEstimatedWaitSeconds(String(row.task_id), String(row.provider_id)).catch(() => null)
+        : null,
+      nextAttemptAt: serializeOptionalDate(row.next_attempt_at),
+      canCancel: waiting,
+      queueEnteredAt: serializeOptionalDate(row.queue_entered_at),
       createdAt: row.created_at,
       completedAt: row.completed_at,
       expiresAt: serializeOptionalDate(row.expires_at),
     });
   } catch (err) {
+    res.status(500).json({ code: 5001, message: '服务器内部错误' });
+  }
+}
+
+export async function cancelTask(req: Request, res: Response): Promise<void> {
+  const userId = (req as AuthenticatedRequest).user.userId;
+  const taskId = String(req.params.taskId);
+  try {
+    const rows = await query<Array<{ provider_id: string; status: string }>>(
+      'SELECT provider_id, status FROM tasks WHERE task_id = ? AND user_id = ? LIMIT 1',
+      [taskId, userId]
+    );
+    const task = rows[0];
+    if (!task) {
+      res.status(404).json({ code: 4004, message: '任务不存在' });
+      return;
+    }
+    if (task.status === 'cancelled') {
+      res.json({ success: true, taskId, status: 'cancelled', alreadyCancelled: true });
+      return;
+    }
+    if (!['waiting_provider', 'retry_wait'].includes(task.status)) {
+      res.status(409).json({ code: 'TASK_NOT_CANCELLABLE', message: '任务已提交供应商，当前无法安全取消' });
+      return;
+    }
+    const result = await query<{ affectedRows: number }>(
+      `UPDATE tasks
+       SET status = 'cancelled', completed_at = NOW(), cancellation_reason = 'cancelled_by_user',
+           provider_slot_released_at = COALESCE(provider_slot_released_at, NOW()),
+           lease_owner = NULL, lease_expires_at = NULL
+       WHERE task_id = ? AND user_id = ? AND status IN ('waiting_provider', 'retry_wait')`,
+      [taskId, userId]
+    );
+    if (Number(result.affectedRows ?? 0) === 0) {
+      res.status(409).json({ code: 'TASK_STATE_CHANGED', message: '任务状态已变化，请刷新后重试' });
+      return;
+    }
+    await activeQuotaTool.refund(userId, task.provider_id, taskId);
+    await query(
+      `INSERT INTO provider_task_events (task_id, provider_id, event_type, from_status, to_status)
+       VALUES (?, ?, 'task_cancelled', ?, 'cancelled')`,
+      [taskId, task.provider_id, task.status]
+    );
+    wakeProviderDispatcher();
+    res.json({ success: true, taskId, status: 'cancelled' });
+  } catch (err) {
+    console.error('[TaskController] cancelTask error:', err);
     res.status(500).json({ code: 5001, message: '服务器内部错误' });
   }
 }

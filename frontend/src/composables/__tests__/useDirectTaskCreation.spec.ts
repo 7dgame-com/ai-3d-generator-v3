@@ -24,7 +24,7 @@ describe('useDirectTaskCreation', () => {
   })
 
   it('creates through the server and never supplies a provider API key to the browser', async () => {
-    mocks.createTask.mockResolvedValue({ data: { taskId: 'server-task-001', status: 'queued' } })
+    mocks.createTask.mockResolvedValue({ data: { taskId: 'server-task-001', providerId: 'tripo3d', status: 'waiting_provider', queuePosition: 3 } })
 
     const { useDirectTaskCreation } = await import('../useDirectTaskCreation')
     const creator = useDirectTaskCreation()
@@ -44,7 +44,7 @@ describe('useDirectTaskCreation', () => {
     })
     await new Promise<void>((resolve) => window.setTimeout(resolve, 0))
     expect(mocks.startPolling).toHaveBeenCalledWith('server-task-001', expect.any(Function))
-    expect(result).toEqual({ taskId: 'server-task-001', mode: 'direct' })
+    expect(result).toEqual({ taskId: 'server-task-001', providerId: 'tripo3d', status: 'waiting_provider', queuePosition: 3, mode: 'direct' })
   })
 
   it('maps a server timeout into the existing failure callback', async () => {

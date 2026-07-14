@@ -125,7 +125,7 @@
             <div class="task-content">
               <div class="task-top">
                 <strong>{{ t(`generator.typeLabel.${task.type}`, task.type) }}</strong>
-                <el-tag>{{ task.status }}</el-tag>
+                <el-tag>{{ taskStatusLabel(task.status) }}</el-tag>
               </div>
               <p>{{ task.prompt || task.taskId }}</p>
               <div class="task-meta">
@@ -152,8 +152,22 @@
                   {{ getTaskExpiry(task)?.text }}
                 </span>
               </div>
-              <el-progress v-if="task.status === 'processing'" :percentage="task.progress" />
+              <p v-if="task.status === 'waiting_provider'" class="queue-hint">
+                {{ t('generator.queueWaiting', { count: Math.max(0, (task.queuePosition ?? 1) - 1) }) }}
+                <span v-if="task.estimatedWaitSeconds">{{ t('generator.estimatedWait', { seconds: task.estimatedWaitSeconds }) }}</span>
+              </p>
+              <p v-else-if="task.status === 'retry_wait'" class="queue-hint">
+                {{ t('generator.queueRetry') }}
+                <span v-if="task.nextAttemptAt">{{ t('generator.retryingAt', { time: formatRetryTime(task.nextAttemptAt) }) }}</span>
+              </p>
+              <p v-else-if="task.status === 'packaging'" class="queue-hint">{{ t('generator.queuePackaging') }}</p>
+              <p v-else-if="task.status === 'provider_state_unknown'" class="queue-hint">{{ t('generator.queueUnknown') }}</p>
+              <p v-if="task.errorMessage" class="task-error">{{ taskErrorMessage(task) }}</p>
+              <el-progress v-if="task.status === 'processing' || task.status === 'packaging'" :percentage="task.progress" />
               <div class="actions">
+                <el-button v-if="task.canCancel" @click="cancelQueuedTask(task.taskId)">
+                  {{ t('generator.cancelQueuedTask') }}
+                </el-button>
                 <el-button v-if="task.status === 'success' && !task.downloadExpired" @click="download(task.taskId)">
                   {{ t('generator.download') }}
                 </el-button>
@@ -201,7 +215,7 @@
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import { ElMessage } from 'element-plus'
 import { UploadFilled } from '@element-plus/icons-vue'
-import { downloadTaskFile, fetchThumbnailBlob, getEnabledProviders, listTasks, type Task } from '../api'
+import { cancelTask as cancelServerTask, downloadTaskFile, fetchThumbnailBlob, getEnabledProviders, listTasks, type Task } from '../api'
 import type { TaskStatusOutput } from '../adapters/IFrontendProviderAdapter'
 import CreditDialog from '../components/CreditDialog.vue'
 import { useCreditCheck } from '../composables/useCreditCheck'
@@ -381,7 +395,7 @@ async function loadTasks(page = currentPage.value) {
   total.value = response.data.total ?? 0
   tasks.value = (response.data.data ?? []).map((task) => normalizeTask(task))
   tasks.value.forEach((task) => {
-    if (task.status === 'queued' || task.status === 'processing') {
+    if (!['success', 'failed', 'timeout', 'cancelled'].includes(task.status)) {
       startPolling(task.taskId, updateTask)
     }
   })
@@ -391,18 +405,28 @@ function handlePageChange(page: number) {
   void loadTasks(page)
 }
 
+async function cancelQueuedTask(taskId: string) {
+  try {
+    await cancelServerTask(taskId)
+    await loadTasks()
+    await refreshAccountQuota()
+  } catch (error) {
+    ElMessage.error(getErrorMessage(error))
+  }
+}
+
 function updateTask(task: Task) {
   const index = tasks.value.findIndex((item) => item.taskId === task.taskId)
   if (index >= 0) {
     const previousTask = tasks.value[index]
-    if (task.status === 'queued' || task.status === 'processing') {
+    if (!['success', 'failed', 'timeout', 'cancelled'].includes(task.status)) {
       setProgressTarget(task.taskId, task.progress ?? 0)
     } else {
       clearProgressTarget(task.taskId)
     }
 
     const becameSuccessful =
-      (previousTask.status === 'queued' || previousTask.status === 'processing') && task.status === 'success'
+      !['success', 'failed', 'timeout', 'cancelled'].includes(previousTask.status) && task.status === 'success'
     if (becameSuccessful && thumbnailBlobUrls.value[task.taskId]) {
       URL.revokeObjectURL(thumbnailBlobUrls.value[task.taskId])
       const nextBlobUrls = { ...thumbnailBlobUrls.value }
@@ -411,8 +435,8 @@ function updateTask(task: Task) {
     }
 
     const becameTerminal =
-      (previousTask.status === 'queued' || previousTask.status === 'processing') &&
-      !['queued', 'processing'].includes(task.status)
+      !['success', 'failed', 'timeout', 'cancelled'].includes(previousTask.status) &&
+      ['success', 'failed', 'timeout', 'cancelled'].includes(task.status)
     if (becameTerminal) {
       void refreshAccountQuota()
     }
@@ -428,7 +452,7 @@ function updateDirectTaskStatus(taskId: string, status: TaskStatusOutput) {
   }
 
   const currentTask = tasks.value[index]
-  if (status.status === 'queued' || status.status === 'processing') {
+  if (!['success', 'failed', 'cancelled'].includes(status.status)) {
     setProgressTarget(taskId, status.progress ?? currentTask.progress ?? 0)
   } else {
     clearProgressTarget(taskId)
@@ -513,6 +537,26 @@ function formatQuotaPower(value: number | null): string {
 
 function formatDateTime(isoString: string): string {
   return formatDateTimeUtil(isoString, String(locale.value))
+}
+
+function formatRetryTime(isoString: string): string {
+  const target = Date.parse(isoString)
+  if (!Number.isFinite(target)) return '-'
+  const seconds = Math.max(0, Math.ceil((target - countdownNowMs.value) / 1000))
+  return seconds === 0 ? t('generator.retryNow') : t('generator.retryCountdown', { seconds })
+}
+
+function taskStatusLabel(status: Task['status']): string {
+  return t(`generator.taskStatus.${status}`)
+}
+
+function taskErrorMessage(task: Task): string {
+  if (task.errorCategory) {
+    const key = `errors.provider_${String(task.errorCategory).toLowerCase()}`
+    const translated = t(key)
+    if (translated !== key) return translated
+  }
+  return task.errorMessage ?? ''
 }
 
 function getTaskExpiry(task: Task) {
@@ -640,23 +684,25 @@ async function submitText() {
 
     tasks.value.unshift({
       taskId: createdTaskId,
-      providerId: selectedProvider.value,
+      providerId: response.providerId,
       type: 'text_to_model',
       prompt: taskPrompt,
-      status: 'queued',
+      status: response.status,
       progress: 0,
       creditCost: 0,
       powerCost: 0,
       outputUrl: null,
       thumbnailUrl: null,
       thumbnailExpired: false,
-      directModeTask: true,
+      directModeTask: false,
       resourceId: null,
       errorMessage: null,
       createdAt: new Date().toISOString(),
       completedAt: null,
       expiresAt: null,
       downloadExpired: false,
+      queuePosition: response.queuePosition,
+      canCancel: response.status === 'waiting_provider' || response.status === 'retry_wait',
     })
     prompt.value = ''
   } catch (error) {
@@ -712,23 +758,25 @@ async function submitImage() {
 
     tasks.value.unshift({
       taskId: createdTaskId,
-      providerId: selectedProvider.value,
+      providerId: response.providerId,
       type: 'image_to_model',
       prompt: null,
-      status: 'queued',
+      status: response.status,
       progress: 0,
       creditCost: 0,
       powerCost: 0,
       outputUrl: null,
       thumbnailUrl: null,
       thumbnailExpired: false,
-      directModeTask: true,
+      directModeTask: false,
       resourceId: null,
       errorMessage: null,
       createdAt: new Date().toISOString(),
       completedAt: null,
       expiresAt: null,
       downloadExpired: false,
+      queuePosition: response.queuePosition,
+      canCancel: response.status === 'waiting_provider' || response.status === 'retry_wait',
     })
     imageFile.value = null
     imageBase64.value = null
@@ -831,6 +879,21 @@ function openMainResource(resourceId: number | null) {
 
 .image-upload-area {
   margin-bottom: 12px;
+}
+
+.queue-hint {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 8px 0 0;
+  color: var(--el-color-info);
+  font-size: 13px;
+}
+
+.task-error {
+  margin: 8px 0 0;
+  color: var(--el-color-danger);
+  font-size: 13px;
 }
 
 .file-input-hidden {

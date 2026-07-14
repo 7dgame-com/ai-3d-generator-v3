@@ -12,12 +12,15 @@ export interface CreateTaskOutput {
 }
 
 export interface TaskStatusOutput {
-  status: 'queued' | 'processing' | 'success' | 'failed';
+  status: 'queued' | 'processing' | 'packaging' | 'success' | 'failed';
   progress: number;
+  providerWorkFinished?: boolean;
   creditCost?: number;
   outputUrl?: string;
   thumbnailUrl?: string;
   errorMessage?: string;
+  providerErrorCode?: string;
+  providerTraceId?: string;
 }
 
 export interface ProviderBalance {

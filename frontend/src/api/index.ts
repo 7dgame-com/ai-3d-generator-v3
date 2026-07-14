@@ -172,7 +172,18 @@ function setupInterceptors(instance: AxiosInstance) {
 setupInterceptors(backendApi)
 setupInterceptors(mainApi)
 
-export type TaskStatus = 'queued' | 'processing' | 'success' | 'failed' | 'timeout'
+export type TaskStatus =
+  | 'waiting_provider'
+  | 'retry_wait'
+  | 'submitting'
+  | 'queued'
+  | 'processing'
+  | 'packaging'
+  | 'provider_state_unknown'
+  | 'success'
+  | 'failed'
+  | 'timeout'
+  | 'cancelled'
 
 export interface Task {
   taskId: string
@@ -194,6 +205,12 @@ export interface Task {
   expiresAt: string | null
   downloadExpired?: boolean
   fileSize?: number | null
+  queuePosition?: number | null
+  estimatedWaitSeconds?: number | null
+  nextAttemptAt?: string | null
+  canCancel?: boolean
+  queueEnteredAt?: string | null
+  errorCategory?: string | null
 }
 
 export interface UsageHistoryItem {
@@ -214,6 +231,7 @@ export interface QuotaStatus {
   remaining_power: number
   has_record: boolean
   updated_at: string | null
+  quota_epoch: number
   user_snapshot?: {
     user_id: number
     username?: string
@@ -236,6 +254,92 @@ export interface QuotaSummary {
   used_user_count: number
   total_used_power: number
   total_remaining_power: number
+}
+
+export interface ProviderRuntime {
+  providerId: string
+  credentialScope: string
+  maxConcurrency: number
+  activeCount: number
+  queueDepth: number
+  oldestWait: string | null
+  paused: boolean
+  pauseReason: string | null
+  pollIntervalSeconds: number
+  retryLimit: number
+  configVersion: number
+  updatedAt: string
+  configured?: boolean
+  statusCounts?: {
+    waiting: number
+    retry: number
+    submitting: number
+    queued: number
+    processing: number
+    packaging: number
+    unknown: number
+    failed: number
+  }
+  recentMetrics?: {
+    throttleCount: number
+    unknownEventCount: number
+    lastErrorAt: string | null
+    lastErrorType: string | null
+  }
+}
+
+export interface ProviderQueueTask {
+  taskId: string
+  providerTaskId: string | null
+  userId: number
+  providerId: string
+  credentialScope: string
+  status: TaskStatus
+  progress: number
+  queueEnteredAt: string | null
+  nextAttemptAt: string | null
+  attemptCount: number
+  priority: number
+  slotAcquiredAt: string | null
+  slotReleasedAt: string | null
+  errorCategory: string | null
+  errorCode: string | null
+  providerTraceId: string | null
+  errorMessage: string | null
+  quotaEpoch: number
+  createdAt: string
+  completedAt: string | null
+}
+
+export interface ProviderObservability {
+  providerId: string
+  credentialScope: string
+  queueDepth: number
+  activeCount: number
+  stateUnknownCount: number
+  oldestWait: string | null
+  oldestWaitSeconds: number
+  dispatchSuccessCount: number
+  dispatchFailedCount: number
+  dispatchSuccessRate: number | null
+  throttleCount: number
+  throttleRate: number | null
+  retryCount: number
+  averageQueueWaitSeconds: number
+  averageActiveSlotSeconds: number
+  waitP50Seconds: number | null
+  waitP95Seconds: number | null
+  paused: boolean
+  pauseReason: string | null
+  alerts: Array<{ code: string; severity: 'warning'; message: string }>
+}
+
+export interface QuotaResetPreview {
+  targetUsers: number
+  clearedPower: number
+  waitingTasks: number
+  activeTasks: number
+  waitingReservedPower: number
 }
 
 export interface UserQuotaItem {
@@ -304,7 +408,12 @@ export const createTask = (payload: {
   imageBase64?: string
   mimeType?: string
   provider_id?: string
-}) => backendApi.post<{ taskId: string; status: TaskStatus }>('/tasks', payload, { timeout: 90000 })
+}) => backendApi.post<{
+  taskId: string
+  status: TaskStatus
+  providerId: string
+  queuePosition: number | null
+}>('/tasks', payload, { timeout: 90000 })
 
 export const listTasks = (params?: { page?: number; pageSize?: number }) =>
   backendApi.get<{ data: Task[]; total: number; page: number; pageSize: number }>('/tasks', { params })
@@ -316,6 +425,8 @@ export const downloadTaskBuffer = (taskId: string) =>
   backendApi.get<ArrayBuffer>(`/download/${taskId}`, { responseType: 'arraybuffer' })
 export const updateTaskResource = (taskId: string, resourceId: number) =>
   backendApi.put<{ success: boolean }>(`/tasks/${taskId}/resource`, { resource_id: resourceId })
+export const cancelTask = (taskId: string) =>
+  backendApi.delete<{ success: boolean; taskId: string; status: 'cancelled' }>(`/tasks/${taskId}`)
 
 export const getAdminConfig = (providerId?: string) =>
   backendApi.get<{ configured: boolean; apiKeyMasked?: string; region?: 'ai' | 'com' }>('/admin/config', {
@@ -326,6 +437,26 @@ export const saveAdminConfig = (apiKey: string, providerId: string) =>
   backendApi.put<{ success: boolean; region?: 'ai' | 'com' }>('/admin/config', { apiKey, provider_id: providerId })
 
 export const getEnabledProviders = () => backendApi.get<{ providers: string[] }>('/admin/providers')
+export const getProviderRuntime = () =>
+  backendApi.get<{ data: ProviderRuntime[] }>('/admin/provider-runtime')
+export const updateProviderRuntime = (
+  providerId: string,
+  payload: Pick<ProviderRuntime, 'maxConcurrency' | 'paused' | 'pollIntervalSeconds' | 'retryLimit' | 'configVersion'> & {
+    pauseReason?: string | null
+  }
+) => backendApi.put<{ success: boolean }>(`/admin/provider-runtime/${providerId}`, payload)
+export const wakeProviderRuntime = (providerId: string) =>
+  backendApi.post<{ success: boolean }>(`/admin/provider-runtime/${providerId}/wake`)
+export const pauseProviderRuntime = (providerId: string, pauseReason?: string) =>
+  backendApi.post<{ success: boolean }>(`/admin/provider-runtime/${providerId}/pause`, { pauseReason })
+export const resumeProviderRuntime = (providerId: string) =>
+  backendApi.post<{ success: boolean }>(`/admin/provider-runtime/${providerId}/resume`)
+export const getProviderQueue = (params?: { provider_id?: string; status?: TaskStatus; page?: number; pageSize?: number }) =>
+  backendApi.get<{ data: ProviderQueueTask[]; pagination: Pagination }>('/admin/provider-queue', { params })
+export const getProviderObservability = () =>
+  backendApi.get<{ data: ProviderObservability[]; windowMinutes: number }>('/admin/observability')
+export const getTaskDiagnostics = (taskId: string) =>
+  backendApi.get<{ task: Omit<ProviderQueueTask, 'priority'> & { leaseOwner: string | null; leaseExpiresAt: string | null }; events: Array<{ eventType: string; fromStatus: string | null; toStatus: string | null; attemptCount: number; traceId: string | null; detail: unknown; createdAt: string }> }>(`/admin/tasks/${taskId}/diagnostics`)
 
 export const getAdminBalance = (providerId: string) =>
   backendApi.get<{ configured: boolean; available?: number; availablePower?: number; frozen?: number; region?: 'ai' | 'com' }>('/admin/balance', {
@@ -358,6 +489,10 @@ export const resetQuotaUsage = (payload?: { note?: string }) =>
     success: boolean
     data: { affectedUsers: number; clearedPower: number; summary: QuotaSummary }
   }>('/admin/quota/reset-usage', payload ?? {})
+export const getQuotaResetPreview = () =>
+  backendApi.get<{ data: QuotaResetPreview }>('/admin/quota/reset-preview')
+export const getUserQuotaResetPreview = (userId: number) =>
+  backendApi.get<{ data: QuotaResetPreview }>(`/admin/user-quotas/${userId}/reset-preview`)
 
 export const resetUserQuotaUsage = (
   userId: number,

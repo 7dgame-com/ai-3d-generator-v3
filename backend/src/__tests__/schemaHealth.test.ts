@@ -1,5 +1,6 @@
 import {
   REQUIRED_TABLES,
+  REQUIRED_QUEUE_COLUMNS,
   SCHEMA_MIGRATIONS,
   SchemaHealthError,
   ensureSchemaReady,
@@ -13,6 +14,10 @@ const mockQuery = jest.fn();
 const mockConnectionQuery = jest.fn();
 const mockRelease = jest.fn();
 const mockGetConnection = jest.fn();
+const requiredQueueColumnRows = REQUIRED_QUEUE_COLUMNS.map((column) => {
+  const [table_name, column_name] = column.split('.');
+  return { table_name, column_name };
+});
 
 jest.mock('../db/connection', () => ({
   query: (...args: unknown[]) => mockQuery(...args),
@@ -51,8 +56,10 @@ describe('schema health checks', () => {
       .mockResolvedValueOnce([])
       .mockResolvedValueOnce([{ db: 'ai_3d_generator_v3' }])
       .mockResolvedValueOnce(REQUIRED_TABLES.map((table) => ({ table_name: table })))
+      .mockResolvedValueOnce(requiredQueueColumnRows)
       .mockResolvedValueOnce([{ db: 'ai_3d_generator_v3' }])
-      .mockResolvedValueOnce(REQUIRED_TABLES.map((table) => ({ table_name: table })));
+      .mockResolvedValueOnce(REQUIRED_TABLES.map((table) => ({ table_name: table })))
+      .mockResolvedValueOnce(requiredQueueColumnRows);
 
     const status = await ensureSchemaReady({});
 
@@ -69,8 +76,10 @@ describe('schema health checks', () => {
       .mockResolvedValueOnce([{ table_name: 'tasks' }])
       .mockResolvedValueOnce([{ db: 'ai_3d_generator_v3' }])
       .mockResolvedValueOnce(REQUIRED_TABLES.map((table) => ({ table_name: table })))
+      .mockResolvedValueOnce(requiredQueueColumnRows)
       .mockResolvedValueOnce([{ db: 'ai_3d_generator_v3' }])
-      .mockResolvedValueOnce(REQUIRED_TABLES.map((table) => ({ table_name: table })));
+      .mockResolvedValueOnce(REQUIRED_TABLES.map((table) => ({ table_name: table })))
+      .mockResolvedValueOnce(requiredQueueColumnRows);
 
     const status = await ensureSchemaReady({});
 
@@ -83,8 +92,10 @@ describe('schema health checks', () => {
     mockQuery
       .mockResolvedValueOnce([{ db: 'ai_3d_generator_v3' }])
       .mockResolvedValueOnce(REQUIRED_TABLES.map((table) => ({ table_name: table })))
+      .mockResolvedValueOnce(requiredQueueColumnRows)
       .mockResolvedValueOnce([{ db: 'ai_3d_generator_v3' }])
-      .mockResolvedValueOnce(REQUIRED_TABLES.map((table) => ({ table_name: table })));
+      .mockResolvedValueOnce(REQUIRED_TABLES.map((table) => ({ table_name: table })))
+      .mockResolvedValueOnce(requiredQueueColumnRows);
 
     const status = await ensureSchemaReady({});
 
@@ -101,7 +112,8 @@ describe('schema health checks', () => {
       .mockResolvedValueOnce([{ db: 'ai_3d_generator_v3' }])
       .mockResolvedValueOnce(baseTables.map((table) => ({ table_name: table })))
       .mockResolvedValueOnce([{ db: 'ai_3d_generator_v3' }])
-      .mockResolvedValueOnce(REQUIRED_TABLES.map((table) => ({ table_name: table })));
+      .mockResolvedValueOnce(REQUIRED_TABLES.map((table) => ({ table_name: table })))
+      .mockResolvedValueOnce(requiredQueueColumnRows);
 
     const status = await ensureSchemaReady({ AUTO_INIT_SCHEMA: 'false' });
 
@@ -134,6 +146,16 @@ describe('schema health checks', () => {
       .mockResolvedValueOnce([{ table_name: 'tasks' }]);
 
     await expect(ensureSchemaReady({ AUTO_INIT_SCHEMA: 'false' })).rejects.toThrow(SchemaHealthError);
+    expect(mockGetConnection).not.toHaveBeenCalled();
+  });
+
+  it('fails readiness when queue columns are missing and auto migration is disabled', async () => {
+    mockQuery
+      .mockResolvedValueOnce([{ db: 'ai_3d_generator_v3' }])
+      .mockResolvedValueOnce(REQUIRED_TABLES.map((table) => ({ table_name: table })))
+      .mockResolvedValueOnce(requiredQueueColumnRows.filter((row) => row.column_name !== 'provider_task_id'));
+
+    await expect(ensureSchemaReady({ AUTO_MIGRATE: 'false' })).rejects.toThrow(SchemaHealthError);
     expect(mockGetConnection).not.toHaveBeenCalled();
   });
 

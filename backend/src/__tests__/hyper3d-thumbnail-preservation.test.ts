@@ -40,8 +40,9 @@ describe('Preservation: Hyper3D status handling', () => {
     const result = await adapter.getTaskStatus('api-key', 'task-missing-glb');
 
     expect(result).toEqual({
-      status: 'processing',
+      status: 'packaging',
       progress: 90,
+      providerWorkFinished: true,
     });
   });
 
@@ -110,8 +111,9 @@ describe('Preservation: Hyper3D status handling', () => {
         const result = await adapter.getTaskStatus('api-key', 'task-property-missing-glb');
 
         expect(result).toEqual({
-          status: 'processing',
+          status: 'packaging',
           progress: 90,
+          providerWorkFinished: true,
         });
       }),
       { numRuns: 50 }

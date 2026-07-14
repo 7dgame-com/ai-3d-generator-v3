@@ -57,4 +57,27 @@ describe('useTaskPoller thumbnail fields', () => {
       })
     )
   })
+
+  it('keeps retrying after a transient platform-network failure', async () => {
+    vi.useFakeTimers()
+    mocks.getTask.mockRejectedValueOnce(new Error('network down')).mockResolvedValueOnce({
+      data: {
+        taskId: 'task-recover', type: 'text_to_model', prompt: 'chair', status: 'success', progress: 100,
+        creditCost: 30, powerCost: 1, outputUrl: null, thumbnailUrl: null, thumbnailExpired: false,
+        resourceId: null, errorMessage: null, createdAt: '2026-04-08T00:00:00.000Z', completedAt: null, expiresAt: null,
+      },
+    })
+    const wrapper = mount(Harness)
+    const onUpdate = vi.fn()
+
+    ;(wrapper.vm as unknown as { startPolling: (taskId: string, onUpdate: (task: unknown) => void) => void })
+      .startPolling('task-recover', onUpdate)
+    await flushPromises()
+    await vi.advanceTimersByTimeAsync(5000)
+
+    expect(mocks.getTask).toHaveBeenCalledTimes(2)
+    expect(onUpdate).toHaveBeenCalledWith(expect.objectContaining({ taskId: 'task-recover', status: 'success' }))
+    wrapper.unmount()
+    vi.useRealTimers()
+  })
 })

@@ -167,7 +167,10 @@ export class Tripo3DAdapter implements IProviderAdapter {
     });
 
     if (resp.data?.code !== 0) {
-      throw new Error(resp.data?.message ?? 'Tripo3D API 返回错误');
+      throw Object.assign(new Error(resp.data?.message ?? 'Tripo3D API 返回错误'), {
+        code: resp.data?.code,
+        response: { status: resp.status, data: resp.data },
+      });
     }
 
     const taskId: string = resp.data.data.task_id;
@@ -176,12 +179,14 @@ export class Tripo3DAdapter implements IProviderAdapter {
 
   async getTaskStatus(apiKey: string, taskId: string, _pollingKey?: string): Promise<TaskStatusOutput> {
     const baseUrl = await this.getBaseUrl();
-    const responseData = await fetch(`${baseUrl}/task/${taskId}`, {
+    const response = await fetch(`${baseUrl}/task/${taskId}`, {
       headers: {
         Authorization: `Bearer ${apiKey}`,
         'Content-Type': 'application/json',
       },
-    }).then((response) => parseFetchJson<{
+    });
+    const providerTraceId = response.headers?.get?.('X-Tripo-Trace-ID') ?? undefined;
+    const responseData = await parseFetchJson<{
       code: number;
       data?: {
         task_id: string;
@@ -199,7 +204,7 @@ export class Tripo3DAdapter implements IProviderAdapter {
           rendered_image?: { url?: string; type?: string };
         };
       };
-    }>(response));
+    }>(response);
 
     const taskData = responseData.data;
     if (!taskData) {
@@ -210,7 +215,7 @@ export class Tripo3DAdapter implements IProviderAdapter {
     let status: TaskStatusOutput['status'];
     if (rawStatus === 'success') {
       status = 'success';
-    } else if (rawStatus === 'failed') {
+    } else if (['failed', 'banned', 'expired', 'cancelled', 'canceled'].includes(rawStatus)) {
       status = 'failed';
     } else if (rawStatus === 'processing' || rawStatus === 'running') {
       status = 'processing';
@@ -232,10 +237,12 @@ export class Tripo3DAdapter implements IProviderAdapter {
     return {
       status,
       progress: taskData.progress ?? 0,
+      providerWorkFinished: status === 'success' || status === 'failed',
       creditCost: taskData.result?.credit_cost,
       outputUrl,
       thumbnailUrl,
-      errorMessage: status === 'failed' ? '任务生成失败' : undefined,
+      errorMessage: status === 'failed' ? `任务生成失败（${rawStatus}）` : undefined,
+      providerTraceId,
     };
   }
 
