@@ -57,7 +57,7 @@ describe('provider reverse proxy config', () => {
     expect(entrypoint).not.toContain('generate_lb_config "APP_CONFIG" "/api-config/" "config"')
     expect(entrypoint).not.toContain('APP_CONFIG_${i}_URL')
     expect(entrypoint).toContain('generate_lb_config "APP_AUTH" "/api-auth/" "auth"')
-    expect(entrypoint).toContain('APP_AUTH_${i}_URL')
+    expect(entrypoint).toContain('${ENV_PREFIX}_${i}_URL')
     expect(entrypoint).toContain('${API_LOCATIONS}${AUTH_LOCATIONS}')
     expect(nginxTemplate).not.toContain('# __CONFIG_LOCATIONS__')
     expect(ai3dFrontendBlock).not.toContain('APP_CONFIG_')

@@ -1,4 +1,4 @@
-import { createRouter, createWebHistory } from 'vue-router'
+import { createRouter, createWebHistory, type RouteRecordRaw } from 'vue-router'
 import { isInIframe } from '../utils/token'
 import { usePermissions } from '../composables/usePermissions'
 import { notifyHostPluginUrlChanged } from '../utils/hostEvents'
@@ -11,9 +11,18 @@ declare module 'vue-router' {
   }
 }
 
-const router = createRouter({
-  history: createWebHistory(),
-  routes: [
+export const shouldRegisterDiagnostics = (isProduction: boolean) => !isProduction
+const developmentRoutes: RouteRecordRaw[] = []
+if (!import.meta.env.PROD) {
+  developmentRoutes.push({
+    path: '/api-diagnostics',
+    name: 'ApiDiagnostics',
+    component: () => import('../views/ApiDiagnosticsView.vue'),
+    meta: { public: true, title: 'API Diagnostics' },
+  })
+}
+
+export const appRoutes: RouteRecordRaw[] = [
     {
       path: '/not-in-iframe',
       name: 'NotInIframe',
@@ -26,12 +35,7 @@ const router = createRouter({
       component: () => import('../views/NoPermissionView.vue'),
       meta: { public: true, title: 'No Permission' },
     },
-    {
-      path: '/api-diagnostics',
-      name: 'ApiDiagnostics',
-      component: () => import('../views/ApiDiagnosticsView.vue'),
-      meta: { public: true, title: 'API Diagnostics' },
-    },
+    ...developmentRoutes,
     {
       path: '/',
       component: () => import('../layout/AppLayout.vue'),
@@ -56,7 +60,11 @@ const router = createRouter({
         },
       ],
     },
-  ],
+  ]
+
+const router = createRouter({
+  history: createWebHistory(),
+  routes: appRoutes,
 })
 
 router.beforeEach(async (to) => {

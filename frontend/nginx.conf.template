@@ -98,14 +98,22 @@ server {
 
     location = /debug-env {
         access_log off;
-        default_type application/json;
-        alias /usr/share/nginx/html/debug-env.json;
+        return 404;
     }
 
     location = /debug-env.json {
         access_log off;
-        default_type application/json;
-        alias /usr/share/nginx/html/debug-env.json;
+        return 404;
+    }
+
+    location = /api-diagnostics {
+        access_log off;
+        return 404;
+    }
+
+    location = /api-diagnostics/ {
+        access_log off;
+        return 404;
     }
 
     location / {

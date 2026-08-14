@@ -19,9 +19,13 @@ vi.mock('../../views/GeneratorView.vue', () => ({ default: { template: '<div>Gen
 vi.mock('../../views/HistoryView.vue', () => ({ default: { template: '<div>History</div>' } }))
 vi.mock('../../views/AdminView.vue', () => ({ default: { template: '<div>Admin</div>' } }))
 
-import router from '../index'
+import router, { shouldRegisterDiagnostics } from '../index'
 
 describe('plugin URL sync', () => {
+  it('does not register diagnostics in Production', () => {
+    expect(shouldRegisterDiagnostics(true)).toBe(false)
+  })
+
   beforeEach(async () => {
     vi.restoreAllMocks()
     await router.push('/')
