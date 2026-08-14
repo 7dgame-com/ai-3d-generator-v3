@@ -3,12 +3,11 @@ import path from 'node:path'
 import { describe, expect, it } from 'vitest'
 
 describe('admin quota access wiring', () => {
-  it('marks the admin route as quota-admin in the router guard', () => {
+  it('keeps diagnostics development-only and marks admin as quota-admin', () => {
     const source = fs.readFileSync(path.resolve(__dirname, '../router/index.ts'), 'utf8')
 
-    expect(source).toContain("path: '/api-diagnostics'")
-    expect(source).toContain("name: 'ApiDiagnostics'")
-    expect(source).toContain("meta: { public: true, title: 'API Diagnostics' }")
+    expect(source).toContain('!isProduction')
+    expect(source).toContain('shouldRegisterDiagnostics')
     expect(source).toContain('requiresQuotaAdmin: true')
     expect(source).toContain('to.meta.requiresQuotaAdmin')
     expect(source).toContain('fetchAllowedActions')
@@ -17,7 +16,7 @@ describe('admin quota access wiring', () => {
     expect(source).toContain("return '/no-permission'")
   })
 
-  it('ships a public API diagnostics page for standalone connectivity checks', () => {
+  it('keeps the diagnostics component for non-Production connectivity checks', () => {
     const source = fs.readFileSync(path.resolve(__dirname, '../views/ApiDiagnosticsView.vue'), 'utf8')
 
     expect(source).toContain('API 诊断面板')

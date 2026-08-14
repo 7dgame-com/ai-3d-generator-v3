@@ -296,43 +296,6 @@ inject_locations "# __BACKEND_LOCATIONS__" "$BACKEND_LOCATIONS"
 
 echo "[entrypoint] Nginx config generated at $OUTPUT"
 
-API_LIST=""
-i=1
-while true; do
-  eval "url=\${APP_API_${i}_URL}"
-  [ -z "$url" ] && break
-  [ -n "$API_LIST" ] && API_LIST="${API_LIST}, "
-  API_LIST="${API_LIST}\"APP_API_${i}_URL\": \"${url}\""
-  i=$((i + 1))
-done
-
-AUTH_LIST=""
-i=1
-while true; do
-  eval "url=\${APP_AUTH_${i}_URL}"
-  [ -z "$url" ] && break
-  [ -n "$AUTH_LIST" ] && AUTH_LIST="${AUTH_LIST}, "
-  AUTH_LIST="${AUTH_LIST}\"APP_AUTH_${i}_URL\": \"${url}\""
-  i=$((i + 1))
-done
-
-BACKEND_LIST=""
-i=1
-while true; do
-  eval "url=\${APP_BACKEND_${i}_URL}"
-  [ -z "$url" ] && break
-  [ -n "$BACKEND_LIST" ] && BACKEND_LIST="${BACKEND_LIST}, "
-  BACKEND_LIST="${BACKEND_LIST}\"APP_BACKEND_${i}_URL\": \"${url}\""
-  i=$((i + 1))
-done
-
-DEBUG_LIST="${API_LIST}${API_LIST:+, }${AUTH_LIST}${AUTH_LIST:+, }${BACKEND_LIST}"
-cat > /usr/share/nginx/html/debug-env.json <<EOF
-{
-  ${DEBUG_LIST}${DEBUG_LIST:+, }
-  "buildTime": "$(TZ='Asia/Shanghai' date '+%Y-%m-%d %H:%M:%S')",
-  "hostname": "$(hostname)"
-}
-EOF
+rm -f /usr/share/nginx/html/debug-env.json
 
 exec nginx -g 'daemon off;'
