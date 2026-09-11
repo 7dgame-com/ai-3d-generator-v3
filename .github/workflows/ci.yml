@@ -48,37 +48,25 @@ jobs:
     name: Build Frontend
     runs-on: ubuntu-latest
     steps:
-      # Frontend runtime-contract tests also inspect the platform's driver.
-      - name: Checkout platform driver contract
-        uses: actions/checkout@v4
-        with:
-          repository: 7dgame-com/xrugc-platform
-          ref: cf7f37379eeb1dada03f5000b8c8eeed152db27d
-          path: platform
-          sparse-checkout: driver
-
-      - name: Checkout plugin at its platform path
-        uses: actions/checkout@v4
-        with:
-          path: platform/plugins/ai-3d-generator-v3
+      - uses: actions/checkout@v4
 
       - uses: actions/setup-node@v4
         with:
           node-version: 24
           cache: npm
-          cache-dependency-path: platform/plugins/ai-3d-generator-v3/frontend/package-lock.json
+          cache-dependency-path: frontend/package-lock.json
 
       - run: npm ci
-        working-directory: platform/plugins/ai-3d-generator-v3/frontend
+        working-directory: frontend
 
       - run: npm run build
-        working-directory: platform/plugins/ai-3d-generator-v3/frontend
+        working-directory: frontend
 
       - run: npm test
-        working-directory: platform/plugins/ai-3d-generator-v3/frontend
+        working-directory: frontend
 
       - uses: actions/upload-artifact@v4
         with:
           name: frontend-dist
-          path: platform/plugins/ai-3d-generator-v3/frontend/dist/
+          path: frontend/dist/
           retention-days: 7
