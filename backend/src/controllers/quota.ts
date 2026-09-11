@@ -2,6 +2,8 @@ import { Response } from 'express';
 import { AuthenticatedRequest } from '../middleware/auth';
 import { activeQuotaTool } from '../services/quotaToolRegistry';
 import { buildQuotaUserSnapshot } from '../services/quotaUserSnapshot';
+import { query } from '../db/connection';
+import { recordAdminAudit } from '../services/adminAudit';
 
 interface QuotaAdminAccess {
   isRoot: boolean;
@@ -108,8 +110,17 @@ export async function updateDefaultLimitHandler(
   }
 
   try {
+    const before = await activeQuotaTool.getSummary(null);
     await activeQuotaTool.setDefaultLimit(limit);
     const summary = await activeQuotaTool.getSummary(null);
+    await recordAdminAudit({
+      actorId: req.user.userId,
+      action: 'quota_default_limit_update',
+      targetType: 'quota_default_limit',
+      targetId: 'global',
+      before: { quotaLimit: before.quota_limit },
+      after: { quotaLimit: summary.quota_limit },
+    });
     res.json({ success: true, data: summary });
   } catch (error) {
     console.error('[QuotaController] PUT /admin/quota/default-limit error:', error);
@@ -133,10 +144,60 @@ export async function resetUsageHandler(
   try {
     const result = await activeQuotaTool.resetAllUsage(note, null);
     const summary = await activeQuotaTool.getSummary(null);
+    await recordAdminAudit({
+      actorId: req.user.userId,
+      action: 'quota_reset_all',
+      targetType: 'quota',
+      targetId: 'all',
+      after: result,
+      detail: { note },
+    });
     res.json({ success: true, data: { ...result, summary } });
   } catch (error) {
     console.error('[QuotaController] POST /admin/quota/reset-usage error:', error);
     sendQuotaOperationError(res, error);
+  }
+}
+
+export async function resetUsagePreviewHandler(
+  req: AuthenticatedRequest,
+  res: Response
+): Promise<void> {
+  if (!resolveQuotaAdminAccess(req, res)) return;
+  const userId = parsePositiveInteger(req.params.userId ?? req.query.user_id);
+  const where = userId === undefined ? '' : 'WHERE q.user_id = ?';
+  const params = userId === undefined ? [] : [userId];
+  try {
+    const userRows = await query<Array<{ target_users: number | string; cleared_power: number | string }>>(
+      `SELECT COUNT(*) AS target_users, COALESCE(SUM(q.used_power), 0) AS cleared_power
+       FROM quota_user_usage q ${where}`,
+      params
+    );
+    const taskWhere = userId === undefined ? '' : 'AND t.user_id = ?';
+    const taskRows = await query<Array<{
+      waiting_tasks: number | string;
+      active_tasks: number | string;
+      waiting_reserved_power: number | string;
+    }>>(
+      `SELECT
+         SUM(CASE WHEN t.status IN ('waiting_provider', 'retry_wait') THEN 1 ELSE 0 END) AS waiting_tasks,
+         SUM(CASE WHEN t.status IN ('submitting', 'queued', 'processing', 'packaging', 'provider_state_unknown') THEN 1 ELSE 0 END) AS active_tasks,
+         COALESCE(SUM(CASE WHEN t.status IN ('waiting_provider', 'retry_wait') THEN t.reserved_power ELSE 0 END), 0) AS waiting_reserved_power
+       FROM tasks t WHERE 1 = 1 ${taskWhere}`,
+      params
+    );
+    res.json({
+      data: {
+        targetUsers: Number(userRows[0]?.target_users ?? 0),
+        clearedPower: Number(userRows[0]?.cleared_power ?? 0),
+        waitingTasks: Number(taskRows[0]?.waiting_tasks ?? 0),
+        activeTasks: Number(taskRows[0]?.active_tasks ?? 0),
+        waitingReservedPower: Number(taskRows[0]?.waiting_reserved_power ?? 0),
+      },
+    });
+  } catch (error) {
+    console.error('[QuotaController] reset preview error:', error);
+    res.status(500).json({ code: 5001, message: '服务器内部错误' });
   }
 }
 
@@ -165,6 +226,14 @@ export async function resetUserUsageHandler(
       requireLearnerRole: true,
     });
     const summary = await activeQuotaTool.getSummary(null);
+    await recordAdminAudit({
+      actorId: req.user.userId,
+      action: 'quota_reset_user',
+      targetType: 'quota_user',
+      targetId: String(userId),
+      after: result,
+      detail: { note },
+    });
     res.json({ success: true, data: { ...result, summary } });
   } catch (error) {
     console.error('[QuotaController] POST /admin/user-quotas/:userId/reset error:', error);

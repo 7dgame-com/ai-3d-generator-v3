@@ -22,8 +22,9 @@ describe('direct-only backend surface', () => {
       'utf8'
     );
 
-    expect(routeSource).toContain("router.post('/prepare', auth, prepareTask);");
-    expect(routeSource).toContain("router.post('/register', auth, registerTask);");
+    expect(routeSource).toContain("router.post('/prepare', auth, rejectLegacyCreationWhenQueueEnabled, prepareTask);");
+    expect(routeSource).toContain("router.post('/register', auth, rejectLegacyCreationWhenQueueEnabled, registerTask);");
+    expect(routeSource).toContain('LEGACY_DIRECT_CREATION_DISABLED');
     expect(routeSource).toContain("router.post('/:taskId/complete', auth, completeTask);");
     expect(routeSource).toContain("router.post('/:taskId/fail', auth, failTask);");
     expect(routeSource).not.toContain('requirePermission');

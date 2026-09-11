@@ -6,6 +6,7 @@ const mockSetDefaultLimit = jest.fn();
 const mockResetAllUsage = jest.fn();
 const mockResetUserUsage = jest.fn();
 const mockListUsageStatuses = jest.fn();
+const mockRecordAdminAudit = jest.fn();
 
 jest.mock('../services/quotaToolRegistry', () => ({
   activeQuotaTool: {
@@ -15,6 +16,10 @@ jest.mock('../services/quotaToolRegistry', () => ({
     resetUserUsage: (...args: unknown[]) => mockResetUserUsage(...args),
     listUsageStatuses: (...args: unknown[]) => mockListUsageStatuses(...args),
   },
+}));
+
+jest.mock('../services/adminAudit', () => ({
+  recordAdminAudit: (...args: unknown[]) => mockRecordAdminAudit(...args),
 }));
 
 import {
@@ -61,6 +66,7 @@ describe('quota admin access', () => {
       data: [],
       pagination: { page: 1, pageSize: 20, total: 0, totalPages: 0 },
     });
+    mockRecordAdminAudit.mockResolvedValue(undefined);
   });
 
   it('allows managers to read global quota summaries', async () => {

@@ -14,7 +14,7 @@ describe('view i18n source wiring', () => {
     expect(source).toContain("t('admin.queryFailed')")
     expect(source).toContain("t('admin.resetUsageFailed')")
     expect(source).not.toContain("t('common.required', { field: t('admin.userId') })")
-    expect(source).toContain("t('admin.resetUsageConfirmMessage')")
+    expect(source).toContain("t('admin.resetPreviewMessage'")
     expect(source).toContain("t('admin.resetUsageConfirmTitle')")
     expect(source).not.toContain("t('common.required', { field: t('admin.provider') })")
     expect(source).toContain('locale.value')

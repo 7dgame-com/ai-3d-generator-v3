@@ -17,6 +17,7 @@ import {
   listUserQuotasHandler,
   resetUsageHandler,
   resetUserUsageHandler,
+  resetUsagePreviewHandler,
   updateDefaultLimitHandler,
 } from '../controllers/quota';
 
@@ -37,6 +38,16 @@ router.post(
   '/admin/quota/reset-usage',
   auth,
   resetUsageHandler as unknown as RequestHandler
+);
+router.get(
+  '/admin/quota/reset-preview',
+  auth,
+  resetUsagePreviewHandler as unknown as RequestHandler
+);
+router.get(
+  '/admin/user-quotas/:userId/reset-preview',
+  auth,
+  resetUsagePreviewHandler as unknown as RequestHandler
 );
 router.post(
   '/admin/user-quotas/:userId/reset',

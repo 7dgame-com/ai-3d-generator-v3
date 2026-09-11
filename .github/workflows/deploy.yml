@@ -10,8 +10,13 @@ env:
   BACKEND_IMAGE: hkccr.ccs.tencentyun.com/plugins/ai-3d-generator-v3-backend
 
 jobs:
+  test:
+    name: Release Tests
+    uses: ./.github/workflows/ci.yml
+
   build-and-push-frontend:
     name: Build & Push Frontend Image
+    needs: test
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -44,6 +49,7 @@ jobs:
 
   build-and-push-backend:
     name: Build & Push Backend Image
+    needs: test
     runs-on: ubuntu-latest
     permissions:
       contents: read

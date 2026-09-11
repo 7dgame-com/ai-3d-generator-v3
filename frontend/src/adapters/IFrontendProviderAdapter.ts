@@ -11,7 +11,7 @@ export interface CreateTaskOutput {
 }
 
 export interface TaskStatusOutput {
-  status: 'queued' | 'processing' | 'success' | 'failed'
+  status: 'waiting_provider' | 'retry_wait' | 'submitting' | 'queued' | 'processing' | 'packaging' | 'provider_state_unknown' | 'success' | 'failed' | 'cancelled'
   progress: number
   creditCost?: number
   outputUrl?: string

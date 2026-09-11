@@ -54,8 +54,9 @@ describe('Bug condition: Hyper3D thumbnail selection', () => {
     const result = await adapter.getTaskStatus('api-key', 'task-hyper-render-pending');
 
     expect(result).toEqual({
-      status: 'processing',
+      status: 'packaging',
       progress: 95,
+      providerWorkFinished: true,
     });
   });
 
@@ -118,8 +119,9 @@ describe('Bug condition: Hyper3D thumbnail selection', () => {
         );
 
         expect(result).toEqual({
-          status: 'processing',
+          status: 'packaging',
           progress: 95,
+          providerWorkFinished: true,
         });
       }),
       { numRuns: 50 }

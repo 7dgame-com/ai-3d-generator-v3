@@ -5,6 +5,7 @@ export interface QuotaStatus {
   user_id: number;
   quota_limit: number;
   used_power: number;
+  quota_epoch: number;
   remaining_power: number;
   has_record: boolean;
   updated_at: Date | null;
@@ -52,6 +53,19 @@ export interface QuotaReserveResult {
   errorCode?: 'INSUFFICIENT_CREDITS' | 'CONCURRENT_CONFLICT';
   usedPowerAfter?: number;
   remainingPower?: number;
+  quotaEpoch?: number;
+}
+
+export interface QuotaEnqueueInput {
+  taskId: string;
+  userId: number;
+  providerId: string;
+  type: 'text_to_model' | 'image_to_model';
+  prompt?: string | null;
+  requestPayload: string;
+  reservedPower: number;
+  outstandingLimit: number;
+  userSnapshot?: QuotaUserSnapshot;
 }
 
 export interface ConfirmDeductResult {
@@ -98,6 +112,8 @@ export interface QuotaTool {
     taskId: string,
     userSnapshot?: QuotaUserSnapshot
   ): Promise<QuotaReserveResult>;
+
+  enqueueWithReservation(input: QuotaEnqueueInput): Promise<QuotaReserveResult>;
 
   refund(userId: number, providerId: string, taskId: string): Promise<void>;
 

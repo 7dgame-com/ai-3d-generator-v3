@@ -59,6 +59,7 @@ const mockRefund = jest.fn();
 jest.mock('../../services/quotaToolRegistry', () => ({
   activeQuotaTool: {
     reserve: (...args: unknown[]) => mockReserve(...args),
+    enqueueWithReservation: (...args: unknown[]) => mockReserve(...args),
     refund: (...args: unknown[]) => mockRefund(...args),
   },
 }));
@@ -83,6 +84,10 @@ import { providerRegistry } from '../../adapters/ProviderRegistry';
 
 // Import controllers after all mocks are registered
 import { createTask, listTasks, getTask, getDownloadUrl } from '../../controllers/task';
+
+const originalQueueEnabled = process.env.UNIFIED_PROVIDER_QUEUE_ENABLED;
+const originalQueueUserIds = process.env.UNIFIED_PROVIDER_QUEUE_USER_IDS;
+const originalQueueDispatchEnabled = process.env.UNIFIED_PROVIDER_QUEUE_DISPATCH_ENABLED;
 
 // ─── Build a minimal Express app for testing ─────────────────────────────────
 function buildApp(): express.Application {
@@ -136,6 +141,9 @@ describe('Integration: complete text-to-3D generation flow', () => {
   const CREDIT_COST = 30;
 
   beforeEach(() => {
+    process.env.UNIFIED_PROVIDER_QUEUE_ENABLED = 'true';
+    delete process.env.UNIFIED_PROVIDER_QUEUE_USER_IDS;
+    process.env.UNIFIED_PROVIDER_QUEUE_DISPATCH_ENABLED = 'true';
     jest.resetAllMocks();
     app = buildApp();
     mockedAxios.isAxiosError.mockReturnValue(false);
@@ -160,7 +168,15 @@ describe('Integration: complete text-to-3D generation flow', () => {
         next_cycle_at: null,
       },
     ]]);
-    mockReserve.mockResolvedValue({ success: true, usedPowerAfter: 1, remainingPower: 99 });
+    mockReserve.mockImplementation(async (input: { taskId?: string }) => {
+      if (input?.taskId) {
+        await mockedQuery(
+          'INSERT INTO tasks (task_id, user_id, provider_id, type, prompt) VALUES (?, ?, ?, ?, ?)',
+          [input.taskId, USER_ID, 'tripo3d', 'text_to_model', 'a cute cat']
+        );
+      }
+      return { success: true, usedPowerAfter: 1, remainingPower: 99, quotaEpoch: 1 };
+    });
     mockRefund.mockResolvedValue(undefined);
     (providerRegistry.isEnabled as jest.Mock).mockImplementation((providerId: string) => providerId === 'tripo3d');
     (providerRegistry.getEnabledIds as jest.Mock).mockReturnValue(['tripo3d']);
@@ -177,6 +193,15 @@ describe('Integration: complete text-to-3D generation flow', () => {
       pollingKey: TASK_ID,
       estimatedCost: CREDIT_COST,
     });
+  });
+
+  afterAll(() => {
+    if (originalQueueEnabled === undefined) delete process.env.UNIFIED_PROVIDER_QUEUE_ENABLED;
+    else process.env.UNIFIED_PROVIDER_QUEUE_ENABLED = originalQueueEnabled;
+    if (originalQueueUserIds === undefined) delete process.env.UNIFIED_PROVIDER_QUEUE_USER_IDS;
+    else process.env.UNIFIED_PROVIDER_QUEUE_USER_IDS = originalQueueUserIds;
+    if (originalQueueDispatchEnabled === undefined) delete process.env.UNIFIED_PROVIDER_QUEUE_DISPATCH_ENABLED;
+    else process.env.UNIFIED_PROVIDER_QUEUE_DISPATCH_ENABLED = originalQueueDispatchEnabled;
   });
 
   it('complete text-to-3D generation flow: submit → queued → success', async () => {
@@ -197,10 +222,10 @@ describe('Integration: complete text-to-3D generation flow', () => {
       .set('Authorization', 'Bearer test-token')
       .send({ type: 'text_to_model', prompt: 'a cute cat', provider_id: 'tripo3d' });
 
-    // ── Step 6: response has taskId and status: 'queued' ──────────────────
-    expect(createResp.status).toBe(201);
-    expect(createResp.body.taskId).toBe(TASK_ID);
-    expect(createResp.body.status).toBe('queued');
+    // ── Step 6: response has a stable local taskId and queue status ────────
+    expect(createResp.status).toBe(202);
+    expect(createResp.body.taskId).toMatch(/^[0-9a-f-]{36}$/);
+    expect(createResp.body.status).toBe('waiting_provider');
 
     // ── Step 7: task was inserted into tasks table ─────────────────────────
     const insertCall = mockedQuery.mock.calls.find(
@@ -208,15 +233,16 @@ describe('Integration: complete text-to-3D generation flow', () => {
     );
     expect(insertCall).toBeDefined();
     const insertParams = insertCall![1] as unknown[];
-    expect(insertParams[0]).toBe(TASK_ID);        // task_id
-    expect(insertParams[1]).toBe(TASK_ID);         // provider_status_key
-    expect(insertParams[2]).toBe(USER_ID);         // user_id
-    expect(insertParams[3]).toBe('tripo3d');       // provider_id
-    expect(insertParams[4]).toBe('text_to_model'); // type
-    expect(insertParams[5]).toBe('a cute cat');    // prompt
+    const localTaskId = String(insertParams[0]);
+    expect(localTaskId).toBe(createResp.body.taskId); // platform task_id
+    expect(insertParams[1]).toBe(USER_ID);            // user_id
+    expect(insertParams[2]).toBe('tripo3d');          // provider_id
+    expect(insertParams[3]).toBe('text_to_model');    // type
+    expect(insertParams[4]).toBe('a cute cat');       // prompt
 
-    // addTaskToPoller was called to start background polling
-    expect(mockedAddTaskToPoller).toHaveBeenCalledWith(TASK_ID);
+    // HTTP admission never calls the supplier directly; dispatcher handles it asynchronously.
+    expect(mockCreateTask).not.toHaveBeenCalled();
+    expect(mockedAddTaskToPoller).not.toHaveBeenCalled();
 
     // ── Step 8-9: Simulate TaskPoller receiving success from Tripo3D ───────
     mockedQuery.mockReset();
@@ -315,7 +341,7 @@ describe('Integration: complete text-to-3D generation flow', () => {
     expect(resp.body.code).toBe(4001);
   });
 
-  it('POST /api/tasks returns 503 when API key is not configured', async () => {
+  it('POST /api/tasks still accepts the local queue when API key is not configured', async () => {
     mockedQuery.mockResolvedValueOnce([]); // no system_config row
 
     const resp = await request(app)
@@ -323,7 +349,8 @@ describe('Integration: complete text-to-3D generation flow', () => {
       .set('Authorization', 'Bearer test-token')
       .send({ type: 'text_to_model', prompt: 'a cute cat', provider_id: 'tripo3d' });
 
-    expect(resp.status).toBe(503);
-    expect(resp.body.code).toBe('PROVIDER_NOT_CONFIGURED');
+    expect(resp.status).toBe(202);
+    expect(resp.body.status).toBe('waiting_provider');
+    expect(mockCreateTask).not.toHaveBeenCalled();
   });
 });
