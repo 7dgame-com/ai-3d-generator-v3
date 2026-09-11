@@ -6,7 +6,7 @@
 
 import { Router } from 'express';
 import { auth } from '../middleware/auth';
-import { createTask, listTasks, getTask, getDownloadUrl, updateTaskResource } from '../controllers/task';
+import { cancelTask, createTask, listTasks, getTask, getDownloadUrl, updateTaskResource } from '../controllers/task';
 
 const router = Router();
 
@@ -18,6 +18,7 @@ router.get('/', auth, listTasks);
 // download-url must be registered before /:taskId to avoid param capture
 router.get('/:taskId/download-url', auth, getDownloadUrl);
 router.get('/:taskId', auth, getTask);
+router.delete('/:taskId', auth, cancelTask);
 
 router.put('/:taskId/resource', auth, updateTaskResource);
 

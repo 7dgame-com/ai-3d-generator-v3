@@ -42,6 +42,35 @@ mysql -h 127.0.0.1 -P 3309 -u bujiaban -p < driver/ai-3d-generator-v3-schema.sql
 - 执行 `USE ai_3d_generator_v3`
 - 创建当前插件所需的全部表结构
 
+## Unified Queue Operations
+
+- [P2 上线、压测与回滚手册](docs/UNIFIED_QUEUE_P2_RUNBOOK.md)
+- [给老师的 Power、上限、清零与排队说明](docs/TEACHER_POWER_QUEUE_GUIDE.md)
+- [老师说明 PDF](output/pdf/ai3d-teacher-power-queue-guide.pdf)
+
+在可丢弃的生产结构副本上演练迁移并核对任务/流水数量：
+
+```bash
+cd backend
+AI3D_MIGRATION_REHEARSAL=1 npm run rehearse:migration
+```
+
+在隔离副本上执行完整的 P2 队列、Power、故障与恢复场景：
+
+```bash
+cd backend
+AI3D_QUEUE_P2_SCENARIOS=1 AI3D_QUEUE_P2_ISOLATED_DB=1 \
+  DB_NAME=ai3d_p2_rehearsal_YYYYMMDD npm run verify:p2-scenarios
+```
+
+在同一隔离副本上执行跨进程的 Dispatcher / State Coordinator 重启恢复演练：
+
+```bash
+cd backend
+AI3D_QUEUE_P2_SCENARIOS=1 AI3D_QUEUE_P2_ISOLATED_DB=1 \
+  DB_NAME=ai3d_p2_rehearsal_YYYYMMDD npm run verify:p2-restart
+```
+
 ## Local Development
 
 前端联调时，优先使用 Vite 开发服务器而不是前端 Docker 镜像。这样改动会直接热更新显示，不需要每次重新 build 前端镜像。

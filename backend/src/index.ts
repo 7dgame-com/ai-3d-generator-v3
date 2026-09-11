@@ -10,7 +10,10 @@ import express, { Request, Response, NextFunction } from 'express';
 import cors from 'cors';
 import { testConnection } from './db/connection';
 import { ensureSchemaReady } from './db/schemaHealth';
-import { startPoller } from './services/taskPoller';
+import { getStateCoordinatorHealth, startPoller, stopPoller } from './services/taskPoller';
+import { getProviderDispatcherHealth, startProviderDispatcher, stopProviderDispatcher } from './services/providerQueue';
+import { getObservabilityRetentionHealth, getQueueOperationalHealth, startObservabilityRetention, stopObservabilityRetention } from './services/observability';
+import { getQueueRolloutStatus } from './services/queueRollout';
 import { startTimeoutGuardian, stopTimeoutGuardian } from './services/timeoutGuardian';
 import { resolveEnabledProviders } from './config/providers';
 import { assertRuntimeConfig, validateRuntimeConfig } from './config/runtime';
@@ -47,6 +50,9 @@ interface HealthState {
     schema: HealthCheck;
     providers: HealthCheck;
     workers: HealthCheck;
+    dispatcher: HealthCheck;
+    stateCoordinator: HealthCheck;
+    observability: HealthCheck;
   };
   error?: string;
 }
@@ -60,6 +66,9 @@ const healthState: HealthState = {
     schema: { status: 'starting' },
     providers: { status: 'starting' },
     workers: { status: 'starting' },
+    dispatcher: { status: 'starting' },
+    stateCoordinator: { status: 'starting' },
+    observability: { status: 'starting' },
   },
 };
 
@@ -89,7 +98,16 @@ app.use(
 app.use(express.json({ limit: '50mb' }));
 
 // ========== 健康检查 ==========
-app.get('/health', (_req: Request, res: Response) => {
+app.get('/health', async (_req: Request, res: Response) => {
+  // Queue backlogs and paused providers are operational warnings, not HTTP-process failures.
+  // Refresh worker details on each probe so a stopped scan loop is visible to operators.
+  if (healthState.status === 'ok') {
+    markCheck('dispatcher', { status: 'ok', details: { ...getProviderDispatcherHealth(), rollout: getQueueRolloutStatus() } });
+    markCheck('stateCoordinator', { status: 'ok', details: getStateCoordinatorHealth() });
+    const retention = getObservabilityRetentionHealth();
+    const operational = await getQueueOperationalHealth().catch((error) => ({ error: (error as Error).message }));
+    markCheck('observability', { status: 'ok', details: { ...retention, operational } });
+  }
   const httpStatus = healthState.status === 'ok' ? 200 : 503;
   res.status(httpStatus).json(healthState);
 });
@@ -151,8 +169,13 @@ async function bootstrap(): Promise<void> {
   markCheck('providers', { status: 'ok', details: { enabledProviders } });
 
   await startPoller();
+  startProviderDispatcher();
   startTimeoutGuardian();
+  startObservabilityRetention();
   markCheck('workers', { status: 'ok' });
+  markCheck('dispatcher', { status: 'ok', details: { ...getProviderDispatcherHealth(), rollout: getQueueRolloutStatus() } });
+  markCheck('stateCoordinator', { status: 'ok', details: getStateCoordinatorHealth() });
+  markCheck('observability', { status: 'ok', details: getObservabilityRetentionHealth() });
 
   healthState.status = 'ok';
 }
@@ -171,11 +194,17 @@ app.listen(PORT, () => {
 process.on('SIGTERM', () => {
   console.log('[Server] 收到 SIGTERM，正在关闭...');
   stopTimeoutGuardian();
+  stopProviderDispatcher();
+  stopPoller();
+  stopObservabilityRetention();
   process.exit(0);
 });
 
 process.on('SIGINT', () => {
   console.log('[Server] 收到 SIGINT，正在关闭...');
   stopTimeoutGuardian();
+  stopProviderDispatcher();
+  stopPoller();
+  stopObservabilityRetention();
   process.exit(0);
 });

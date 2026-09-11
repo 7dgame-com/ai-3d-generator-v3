@@ -4,6 +4,7 @@ const mockBeginTransaction = jest.fn();
 const mockCommit = jest.fn();
 const mockRollback = jest.fn();
 const mockRelease = jest.fn();
+const originalAdmissionRetries = process.env.AI3D_QUEUE_ADMISSION_MAX_RETRIES;
 
 jest.mock('../db/connection', () => ({
   pool: {
@@ -24,10 +25,21 @@ describe('SimpleUserUsageQuotaTool', () => {
   const tool = new SimpleUserUsageQuotaTool();
 
   beforeEach(() => {
+    // A queue admission retry installs default mock responses; reset query
+    // implementations as well as call history so each transaction fixture is
+    // isolated from the preceding test.
+    mockPoolQuery.mockReset();
+    mockConnQuery.mockReset();
     jest.clearAllMocks();
+    delete process.env.AI3D_QUEUE_ADMISSION_MAX_RETRIES;
     mockBeginTransaction.mockResolvedValue(undefined);
     mockCommit.mockResolvedValue(undefined);
     mockRollback.mockResolvedValue(undefined);
+  });
+
+  afterAll(() => {
+    if (originalAdmissionRetries === undefined) delete process.env.AI3D_QUEUE_ADMISSION_MAX_RETRIES;
+    else process.env.AI3D_QUEUE_ADMISSION_MAX_RETRIES = originalAdmissionRetries;
   });
 
   it('treats users without usage rows as zero used power', async () => {
@@ -42,6 +54,7 @@ describe('SimpleUserUsageQuotaTool', () => {
       user_id: 7,
       quota_limit: 100,
       used_power: 0,
+      quota_epoch: 1,
       remaining_power: 100,
       has_record: false,
       updated_at: null,
@@ -83,12 +96,14 @@ describe('SimpleUserUsageQuotaTool', () => {
       success: true,
       usedPowerAfter: 30,
       remainingPower: 70,
+      quotaEpoch: 1,
     });
     expect(mockConnQuery).toHaveBeenNthCalledWith(
       2,
-      'INSERT INTO quota_user_usage (user_id, used_power, user_snapshot) VALUES (?, ?, ?)',
+      'INSERT INTO quota_user_usage (user_id, quota_epoch, used_power, user_snapshot) VALUES (?, ?, ?, ?)',
       [
         7,
+        1,
         30,
         expect.stringContaining('"username":"alice"'),
       ]
@@ -96,6 +111,7 @@ describe('SimpleUserUsageQuotaTool', () => {
     expect(String(mockConnQuery.mock.calls[2][0])).toContain('INSERT INTO quota_usage_ledger');
     expect(mockConnQuery.mock.calls[2][1]).toEqual([
       7,
+      1,
       'pre_deduct',
       30,
       30,
@@ -115,6 +131,89 @@ describe('SimpleUserUsageQuotaTool', () => {
       expect.stringContaining('INSERT INTO system_config'),
       ['quota.default_limit_power', '88.89']
     );
+  });
+
+  it('atomically writes the local queue task and Power reservation', async () => {
+    mockPoolQuery.mockResolvedValueOnce([[{ value: '100' }]]);
+    mockConnQuery
+      .mockResolvedValueOnce([[]])
+      .mockResolvedValueOnce([[{ total: 0 }]])
+      .mockResolvedValue({ affectedRows: 1 });
+
+    const result = await tool.enqueueWithReservation({
+      taskId: 'local-task-1',
+      userId: 7,
+      providerId: 'tripo3d',
+      type: 'text_to_model',
+      prompt: 'cat',
+      requestPayload: JSON.stringify({ type: 'text_to_model', prompt: 'cat' }),
+      reservedPower: 1.43,
+      outstandingLimit: 1,
+      userSnapshot: { user_id: 7, username: 'alice' },
+    });
+
+    expect(result).toMatchObject({ success: true, quotaEpoch: 1, usedPowerAfter: 1.43 });
+    expect(mockBeginTransaction).toHaveBeenCalledTimes(1);
+    expect(mockCommit).toHaveBeenCalledTimes(1);
+    expect(mockConnQuery.mock.calls.some((call) => String(call[0]).includes('INSERT INTO tasks'))).toBe(true);
+    expect(mockConnQuery.mock.calls.some((call) => String(call[0]).includes("'task_enqueued'"))).toBe(true);
+    expect(mockConnQuery.mock.calls.some((call) => String(call[0]).includes('INSERT INTO quota_usage_ledger'))).toBe(true);
+  });
+
+  it('retries a deadlocked queue admission without creating a second reservation', async () => {
+    mockPoolQuery
+      .mockResolvedValueOnce([[{ value: '100' }]])
+      .mockResolvedValueOnce([[{ value: '100' }]]);
+    const deadlock = Object.assign(new Error('deadlock'), { code: 'ER_LOCK_DEADLOCK', errno: 1213 });
+    mockConnQuery
+      .mockRejectedValueOnce(deadlock)
+      .mockResolvedValueOnce([[]])
+      .mockResolvedValueOnce([[{ total: 0 }]])
+      .mockResolvedValue({ affectedRows: 1 });
+
+    const result = await tool.enqueueWithReservation({
+      taskId: 'local-task-deadlock-retry',
+      userId: 71,
+      providerId: 'tripo3d',
+      type: 'text_to_model',
+      prompt: 'retry safely',
+      requestPayload: JSON.stringify({ type: 'text_to_model', prompt: 'retry safely' }),
+      reservedPower: 1,
+      outstandingLimit: 1,
+      userSnapshot: { user_id: 71, username: 'retry-user', roles: ['user'] },
+    });
+
+    expect(result).toMatchObject({ success: true, quotaEpoch: 1, usedPowerAfter: 1 });
+    expect(mockBeginTransaction).toHaveBeenCalledTimes(2);
+    expect(mockRollback).toHaveBeenCalledTimes(1);
+    expect(mockCommit).toHaveBeenCalledTimes(1);
+    expect(mockConnQuery.mock.calls.filter((call) => String(call[0]).includes('INSERT INTO quota_usage_ledger'))).toHaveLength(1);
+  });
+
+  it('does not mutate the current quota cycle when an old task settles late', async () => {
+    mockConnQuery
+      .mockResolvedValueOnce([[{ status: 'processing', error_message: null, quota_epoch: 1 }]])
+      .mockResolvedValueOnce([[{ amount: '1.00' }]])
+      .mockResolvedValueOnce([[{ user_id: 7, quota_epoch: 2, used_power: '0.00' }]])
+      .mockResolvedValue({ affectedRows: 1 });
+
+    await tool.finalizeTaskSuccess(
+      7,
+      'tripo3d',
+      'old-task',
+      'https://cdn.example.com/model.glb',
+      2,
+      40
+    );
+
+    expect(mockConnQuery.mock.calls.some((call) =>
+      String(call[0]).startsWith('UPDATE quota_user_usage SET used_power')
+    )).toBe(false);
+    const ledgerCall = mockConnQuery.mock.calls.find((call) =>
+      String(call[0]).includes('INSERT INTO quota_usage_ledger')
+    );
+    expect(ledgerCall?.[1]?.[1]).toBe(1);
+    expect(mockCommit).toHaveBeenCalledTimes(1);
   });
 
   it('uses the global limit for organization summaries', async () => {
@@ -203,9 +302,10 @@ describe('SimpleUserUsageQuotaTool', () => {
     const result = await tool.resetAllUsage('manual reset');
 
     expect(result).toEqual({ affectedUsers: 2, clearedPower: 45.5 });
-    expect(String(mockConnQuery.mock.calls[1][0])).toContain("SELECT user_id, 'admin_reset', -used_power");
-    expect(mockConnQuery.mock.calls[1][1]).toEqual(['manual reset']);
-    expect(mockConnQuery.mock.calls[2][0]).toBe('UPDATE quota_user_usage SET used_power = 0');
+    const resetLedgerCall = mockConnQuery.mock.calls.find((call) => String(call[0]).includes("'admin_reset', -used_power"));
+    const resetUsageCall = mockConnQuery.mock.calls.find((call) => String(call[0]).includes('quota_epoch = quota_epoch + 1'));
+    expect(resetLedgerCall?.[1]).toEqual(['manual reset']);
+    expect(resetUsageCall?.[0]).toContain('UPDATE quota_user_usage');
     expect(mockCommit).toHaveBeenCalledTimes(1);
   });
 
@@ -284,9 +384,11 @@ describe('SimpleUserUsageQuotaTool', () => {
     const result = await tool.resetAllUsage('org reset', { id: 7 });
 
     expect(result).toEqual({ affectedUsers: 1, clearedPower: 30 });
-    expect(String(mockConnQuery.mock.calls[1][0])).toContain('WHERE user_id IN (?)');
-    expect(mockConnQuery.mock.calls[1][1]).toEqual(['org reset', 7]);
-    expect(mockConnQuery.mock.calls[2][1]).toEqual([7]);
+    const resetLedgerCall = mockConnQuery.mock.calls.find((call) => String(call[0]).includes("'admin_reset', -used_power"));
+    const resetUsageCall = mockConnQuery.mock.calls.find((call) => String(call[0]).includes('quota_epoch = quota_epoch + 1'));
+    expect(String(resetLedgerCall?.[0])).toContain('WHERE user_id IN (?)');
+    expect(resetLedgerCall?.[1]).toEqual(['org reset', 7]);
+    expect(resetUsageCall?.[1]).toEqual([7]);
     expect(mockCommit).toHaveBeenCalledTimes(1);
   });
 
@@ -313,9 +415,11 @@ describe('SimpleUserUsageQuotaTool', () => {
     });
 
     expect(result).toEqual({ affectedUsers: 1, clearedPower: 12.5 });
-    expect(String(mockConnQuery.mock.calls[1][0])).toContain('INSERT INTO quota_usage_ledger');
-    expect(mockConnQuery.mock.calls[1][1]).toEqual([
+    const resetLedgerCall = mockConnQuery.mock.calls.find((call) => Array.isArray(call[1]) && call[1].includes('admin_reset'));
+    expect(String(resetLedgerCall?.[0])).toContain('INSERT INTO quota_usage_ledger');
+    expect(resetLedgerCall?.[1]).toEqual([
       9,
+      1,
       'admin_reset',
       -12.5,
       0,
@@ -325,8 +429,9 @@ describe('SimpleUserUsageQuotaTool', () => {
       0,
       'single reset',
     ]);
-    expect(mockConnQuery.mock.calls[2]).toEqual([
-      'UPDATE quota_user_usage SET used_power = 0 WHERE user_id = ?',
+    const resetUsageCall = mockConnQuery.mock.calls.find((call) => String(call[0]).includes('quota_epoch = quota_epoch + 1'));
+    expect(resetUsageCall).toEqual([
+      'UPDATE quota_user_usage SET used_power = 0, quota_epoch = quota_epoch + 1 WHERE user_id = ?',
       [9],
     ]);
   });

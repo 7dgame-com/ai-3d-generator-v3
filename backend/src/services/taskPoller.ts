@@ -1,9 +1,12 @@
+import { randomUUID } from 'node:crypto';
 import { query } from '../db/connection';
 import { creditToPower, getEstimatedCreditCost } from '../config/providers';
 import { decrypt } from './crypto';
 import { activeQuotaTool } from './quotaToolRegistry';
 import { providerRegistry } from '../adapters/ProviderRegistry';
 import { computeExpiresAt } from '../utils/urlExpiry';
+import { releaseProviderSlot } from './providerQueue';
+import { logQueueEvent } from './observability';
 
 const POLL_INTERVAL_MS = 3000;
 const TIMEOUT_MS = 10 * 60 * 1000;
@@ -11,9 +14,18 @@ const MAX_CONSECUTIVE_FAILURES = 3;
 const DIRECT_PROVIDER_STATUS_KEY_PREFIX = 'direct:';
 
 const activePollers = new Set<string>();
+let discoveryTimer: NodeJS.Timeout | null = null;
 
 /** Tracks the last written progress per task for smooth interpolation */
 const lastProgress = new Map<string, number>();
+
+function schedulePoll(taskId: string, startTime: number, failureCount: number, delayMs: number): void {
+  setTimeout(() => {
+    void pollTask(taskId, startTime, failureCount).catch((error) => {
+      console.error(`[TaskPoller] unhandled poll failure for ${taskId}:`, (error as Error)?.message ?? error);
+    });
+  }, delayMs);
+}
 
 /** Smoothly interpolate progress: advance toward target but don't jump */
 export function smoothProgress(taskId: string, targetProgress: number): number {
@@ -45,15 +57,31 @@ interface TaskContext {
   user_id: number;
   provider_id: string;
   provider_status_key: string | null;
+  provider_task_id: string | null;
+  credential_scope: string;
+  quota_epoch: number;
+  provider_trace_id: string | null;
   status: string;
+  poll_interval_seconds: number | null;
 }
 
 async function getTaskContext(taskId: string): Promise<TaskContext | null> {
   const rows = await query<TaskContext[]>(
-    'SELECT user_id, provider_id, provider_status_key, status FROM tasks WHERE task_id = ? LIMIT 1',
+    `SELECT t.user_id, t.provider_id, t.provider_task_id, t.provider_status_key, t.status,
+            t.credential_scope, t.quota_epoch, t.provider_trace_id,
+            COALESCE(c.poll_interval_seconds, 3) AS poll_interval_seconds
+     FROM tasks t
+     LEFT JOIN provider_runtime_config c
+       ON c.provider_id = t.provider_id AND c.credential_scope = t.credential_scope
+     WHERE t.task_id = ? LIMIT 1`,
     [taskId]
   );
   return rows?.[0] ?? null;
+}
+
+function getPollDelayMs(taskContext: TaskContext, packaging = false): number {
+  const baseSeconds = Math.max(1, Number(taskContext.poll_interval_seconds ?? 3));
+  return baseSeconds * 1000 * (packaging ? 3 : 1);
 }
 
 function normalizeProviderStatusKey(providerStatusKey: string | null, taskId: string): string {
@@ -70,13 +98,18 @@ function normalizeProviderStatusKey(providerStatusKey: string | null, taskId: st
 
 async function markTaskFailed(taskId: string, errorMessage: string): Promise<void> {
   lastProgress.delete(taskId);
-  await query(
-    "UPDATE tasks SET status = 'failed', error_message = ?, completed_at = NOW() WHERE task_id = ?",
-    [errorMessage, taskId]
-  );
-
   const taskContext = await getTaskContext(taskId);
   if (!taskContext) {
+    return;
+  }
+  const result = await query<{ affectedRows: number }>(
+    `UPDATE tasks
+     SET status = 'failed', error_message = ?, completed_at = NOW(),
+         provider_slot_released_at = COALESCE(provider_slot_released_at, NOW())
+     WHERE task_id = ? AND status NOT IN ('success', 'failed', 'timeout', 'cancelled')`,
+    [errorMessage, taskId]
+  );
+  if (Number(result.affectedRows ?? 0) === 0) {
     return;
   }
 
@@ -90,20 +123,10 @@ async function markTaskFailed(taskId: string, errorMessage: string): Promise<voi
 async function markTaskTimeout(taskId: string): Promise<void> {
   lastProgress.delete(taskId);
   await query(
-    "UPDATE tasks SET status = 'timeout', error_message = '生成超时', completed_at = NOW() WHERE task_id = ?",
+    `UPDATE tasks SET status = 'provider_state_unknown', error_message = '本地等待超时，正在核对供应商状态'
+     WHERE task_id = ? AND status NOT IN ('success', 'failed', 'timeout', 'cancelled')`,
     [taskId]
   );
-
-  const taskContext = await getTaskContext(taskId);
-  if (!taskContext) {
-    return;
-  }
-
-  try {
-    await activeQuotaTool.refund(taskContext.user_id, taskContext.provider_id, taskId);
-  } catch (error) {
-    console.error(`[TaskPoller] timeout refund failed for ${taskId}:`, (error as Error).message);
-  }
 }
 
 async function handleSuccess(
@@ -191,14 +214,19 @@ async function pollTask(taskId: string, startTime: number, failureCount: number)
     return;
   }
 
-  if (taskContext.status === 'success' || taskContext.status === 'failed' || taskContext.status === 'timeout') {
+  if (['success', 'failed', 'timeout', 'cancelled'].includes(taskContext.status)) {
     lastProgress.delete(taskId);
     activePollers.delete(taskId);
     return;
   }
 
   const { provider_id: providerId, provider_status_key: providerStatusKey } = taskContext;
-  const effectiveStatusKey = normalizeProviderStatusKey(providerStatusKey, taskId);
+  const providerTaskId = taskContext.provider_task_id ?? taskId;
+  if (!providerTaskId) {
+    activePollers.delete(taskId);
+    return;
+  }
+  const effectiveStatusKey = normalizeProviderStatusKey(providerStatusKey, providerTaskId);
   const adapter = providerRegistry.get(providerId);
   if (!adapter) {
     activePollers.delete(taskId);
@@ -216,17 +244,39 @@ async function pollTask(taskId: string, startTime: number, failureCount: number)
       await markTaskFailed(taskId, '轮询失败');
       return;
     }
-    setTimeout(() => pollTask(taskId, startTime, nextFailures), POLL_INTERVAL_MS);
+    schedulePoll(taskId, startTime, nextFailures, getPollDelayMs(taskContext));
     return;
   }
 
   try {
-    const status = await adapter.getTaskStatus(apiKey, taskId, effectiveStatusKey);
+    const status = await adapter.getTaskStatus(apiKey, providerTaskId, effectiveStatusKey);
+
+    if (status.providerTraceId || status.providerErrorCode) {
+      await query(
+        `UPDATE tasks
+         SET provider_trace_id = COALESCE(?, provider_trace_id),
+             provider_error_code = COALESCE(?, provider_error_code)
+         WHERE task_id = ?`,
+        [status.providerTraceId ?? null, status.providerErrorCode ?? null, taskId]
+      );
+    }
+
+    logQueueEvent({
+      event: 'provider_status_observed', localTaskId: taskId, providerTaskId, providerId,
+      credentialScope: taskContext.credential_scope, quotaEpoch: Number(taskContext.quota_epoch ?? 1),
+      taskStatus: status.status, providerCategory: status.providerErrorCode ? 'PROVIDER_RESPONSE' : null,
+      providerCode: status.providerErrorCode ?? null, internalTraceId: randomUUID(),
+      providerTraceId: status.providerTraceId ?? taskContext.provider_trace_id,
+    });
+
+    if (status.providerWorkFinished) {
+      await releaseProviderSlot(taskId);
+    }
 
     if (status.status === 'success') {
       if (!status.outputUrl || status.outputUrl.trim().length === 0) {
         await query('UPDATE tasks SET progress = ? WHERE task_id = ?', [status.progress ?? 99, taskId]);
-        setTimeout(() => pollTask(taskId, startTime, 0), POLL_INTERVAL_MS);
+        schedulePoll(taskId, startTime, 0, getPollDelayMs(taskContext));
         return;
       }
       const actualCost = status.creditCost ?? getEstimatedCreditCost(providerId);
@@ -239,6 +289,7 @@ async function pollTask(taskId: string, startTime: number, failureCount: number)
           actualCost,
           status.thumbnailUrl
         );
+        await releaseProviderSlot(taskId);
         activePollers.delete(taskId);
         return;
       } catch (error) {
@@ -258,23 +309,29 @@ async function pollTask(taskId: string, startTime: number, failureCount: number)
     if (status.status === 'failed') {
       activePollers.delete(taskId);
       await markTaskFailed(taskId, status.errorMessage ?? '任务生成失败');
+      await releaseProviderSlot(taskId);
       return;
     }
 
     await query('UPDATE tasks SET progress = ? WHERE task_id = ?', [smoothProgress(taskId, status.progress ?? 0), taskId]);
     if (status.status === 'processing') {
       await query("UPDATE tasks SET status = 'processing' WHERE task_id = ? AND status = 'queued'", [taskId]);
+    } else if (status.status === 'packaging') {
+      await query("UPDATE tasks SET status = 'packaging' WHERE task_id = ? AND status IN ('queued', 'processing', 'packaging')", [taskId]);
     }
 
-    setTimeout(() => pollTask(taskId, startTime, 0), POLL_INTERVAL_MS);
+    schedulePoll(taskId, startTime, 0, getPollDelayMs(taskContext, status.status === 'packaging'));
   } catch (error) {
     const nextFailures = failureCount + 1;
     if (nextFailures >= MAX_CONSECUTIVE_FAILURES) {
       activePollers.delete(taskId);
-      await markTaskFailed(taskId, '轮询失败');
+      await query(
+        "UPDATE tasks SET status = 'provider_state_unknown', error_message = '供应商状态暂时无法确认' WHERE task_id = ?",
+        [taskId]
+      );
       return;
     }
-    setTimeout(() => pollTask(taskId, startTime, nextFailures), POLL_INTERVAL_MS);
+    schedulePoll(taskId, startTime, nextFailures, getPollDelayMs(taskContext));
   }
 }
 
@@ -283,7 +340,7 @@ function addTaskToPollerInternal(taskId: string): void {
     return;
   }
   activePollers.add(taskId);
-  setTimeout(() => pollTask(taskId, Date.now(), 0), POLL_INTERVAL_MS);
+  schedulePoll(taskId, Date.now(), 0, POLL_INTERVAL_MS);
 }
 
 export function addTaskToPoller(taskId: string): void {
@@ -291,15 +348,30 @@ export function addTaskToPoller(taskId: string): void {
 }
 
 export async function startPoller(): Promise<void> {
-  try {
+  const discover = async (): Promise<void> => {
+    try {
     const pendingTasks = await query<Array<{ task_id: string }>>(
-      "SELECT task_id FROM tasks WHERE status IN ('queued', 'processing')"
+      "SELECT task_id FROM tasks WHERE provider_task_id IS NOT NULL AND status IN ('queued', 'processing', 'packaging', 'provider_state_unknown')"
     );
 
     for (const { task_id } of pendingTasks ?? []) {
       addTaskToPollerInternal(task_id);
     }
-  } catch (error) {
-    console.error('[TaskPoller] failed to start:', (error as Error).message);
+    } catch (error) {
+      console.error('[TaskPoller] discovery failed:', (error as Error).message);
+    }
+  };
+  await discover();
+  if (!discoveryTimer) {
+    discoveryTimer = setInterval(() => void discover(), POLL_INTERVAL_MS);
   }
+}
+
+export function stopPoller(): void {
+  if (discoveryTimer) clearInterval(discoveryTimer);
+  discoveryTimer = null;
+}
+
+export function getStateCoordinatorHealth(): { running: boolean; activePollers: number } {
+  return { running: discoveryTimer !== null, activePollers: activePollers.size };
 }

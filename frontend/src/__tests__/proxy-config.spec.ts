@@ -42,17 +42,13 @@ describe('provider reverse proxy config', () => {
     expect(viteConfig).toContain('proxy: proxyConfig')
   })
 
-  it('ships docker runtime wiring without api-config upstreams', () => {
+  it('ships plugin runtime wiring without api-config upstreams', () => {
     const entrypointPath = path.resolve(__dirname, '../../docker-entrypoint.sh')
     const entrypoint = fs.readFileSync(entrypointPath, 'utf-8')
     const nginxTemplatePath = path.resolve(__dirname, '../../nginx.conf.template')
     const nginxTemplate = fs.readFileSync(nginxTemplatePath, 'utf-8')
-    const composePath = path.resolve(process.cwd(), '../../../driver/docker-compose.yml')
-    const compose = fs.readFileSync(composePath, 'utf-8')
-    const ai3dFrontendBlock =
-      compose.match(/  ai-3d-generator-v3-frontend:[\s\S]*?(?=\n  [A-Za-z0-9_-]+:|\nvolumes:|\n$)/)?.[0] ?? ''
-    const ai3dBackendBlock =
-      compose.match(/  ai-3d-generator-v3-backend:[\s\S]*?(?=\n  [A-Za-z0-9_-]+:|\nvolumes:|\n$)/)?.[0] ?? ''
+    // Platform Compose assertions run in xrugc-platform's
+    // tests/ai-3d-runtime-contract.test.mjs against the actual driver file.
 
     expect(entrypoint).not.toContain('generate_lb_config "APP_CONFIG" "/api-config/" "config"')
     expect(entrypoint).not.toContain('APP_CONFIG_${i}_URL')
@@ -60,9 +56,6 @@ describe('provider reverse proxy config', () => {
     expect(entrypoint).toContain('${ENV_PREFIX}_${i}_URL')
     expect(entrypoint).toContain('${API_LOCATIONS}${AUTH_LOCATIONS}')
     expect(nginxTemplate).not.toContain('# __CONFIG_LOCATIONS__')
-    expect(ai3dFrontendBlock).not.toContain('APP_CONFIG_')
-    expect(ai3dBackendBlock).not.toContain('APP_CONFIG_')
-    expect(ai3dBackendBlock).toContain('APP_API_1_URL=http://api:80')
   })
 
   it('registers Vite reverse proxies for Tripo3D and Hyper3D', () => {

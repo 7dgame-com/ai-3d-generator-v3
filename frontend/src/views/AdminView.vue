@@ -42,6 +42,9 @@
               <p v-if="provider === 'tripo3d' && configs[provider]?.region" class="provider-region-label">
                 {{ configs[provider]?.region === 'ai' ? t('admin.regionInternational') : t('admin.regionDomestic') }}
               </p>
+              <p v-if="providerRuntime[provider]?.credentialScope" class="provider-region-label">
+                {{ t('admin.credentialScope') }}: {{ providerRuntime[provider]?.credentialScope }}
+              </p>
             </div>
             <span class="status-pill" :data-ready="String(configs[provider]?.configured ?? false)">
               {{ configs[provider]?.configured ? t('admin.providerStatusConfigured') : t('admin.providerStatusMissing') }}
@@ -61,6 +64,40 @@
 
           <p class="provider-footnote">{{ formatProviderBalanceFootnote(provider) }}</p>
 
+          <div v-if="providerRuntime[provider]" class="runtime-controls">
+            <div class="provider-metrics">
+              <div class="metric-card">
+                <span>{{ t('admin.activeTasks') }}</span>
+                <strong>{{ providerRuntime[provider]?.activeCount ?? 0 }}</strong>
+              </div>
+              <div class="metric-card">
+                <span>{{ t('admin.queuedTasks') }}</span>
+                <strong>{{ providerRuntime[provider]?.queueDepth ?? 0 }}</strong>
+              </div>
+            </div>
+            <div class="quota-limit-control">
+              <span>{{ provider === 'hyper3d' ? t('admin.hyperContractConcurrency') : t('admin.maxConcurrency') }}</span>
+              <el-input-number
+                v-model="runtimeDrafts[provider].maxConcurrency"
+                :min="1"
+                :max="provider === 'tripo3d' ? 5 : 100"
+              />
+              <el-switch v-model="runtimeDrafts[provider].paused" :active-text="t('admin.providerPaused')" />
+              <el-button @click="saveRuntime(provider)">{{ t('common.save') }}</el-button>
+              <el-button text @click="wakeRuntime(provider)">{{ t('admin.wakeDispatcher') }}</el-button>
+            </div>
+            <p class="provider-footnote">{{ t('admin.loweringConcurrencyHint') }}</p>
+            <p v-if="providerRuntime[provider]?.pauseReason" class="runtime-warning">
+              {{ providerRuntime[provider]?.pauseReason }}
+            </p>
+            <div class="runtime-stat-line">
+              <span>{{ t('admin.oldestWait') }}: {{ formatDateTime(providerRuntime[provider]?.oldestWait ?? null) }}</span>
+              <span>{{ t('admin.throttleCount') }}: {{ providerRuntime[provider]?.recentMetrics?.throttleCount ?? 0 }}</span>
+              <span>{{ t('admin.unknownTasks') }}: {{ providerRuntime[provider]?.statusCounts?.unknown ?? 0 }}</span>
+              <span>{{ t('admin.lastProviderError') }}: {{ providerRuntime[provider]?.recentMetrics?.lastErrorType || '-' }}</span>
+            </div>
+          </div>
+
           <div class="provider-actions">
             <el-input
               v-model="draftKeys[provider]"
@@ -74,6 +111,68 @@
             </div>
           </div>
         </article>
+      </div>
+    </section>
+
+    <section v-if="isRootUser" class="panel">
+      <div class="panel-head">
+        <div>
+          <h3>{{ t('admin.providerQueueTitle') }}</h3>
+          <p class="panel-hint">{{ t('admin.providerQueueHint') }}</p>
+        </div>
+        <el-button :loading="queueLoading" @click="loadQueueData">{{ t('admin.refresh') }}</el-button>
+      </div>
+      <div v-if="providerObservability.length > 0" class="observability-grid">
+        <article
+          v-for="metric in providerObservability"
+          :key="`${metric.providerId}:${metric.credentialScope}:summary`"
+          class="observability-card"
+        >
+          <strong>{{ metric.providerId }} · {{ metric.credentialScope }}</strong>
+          <span>{{ t('admin.dispatchSuccessRate') }}: {{ formatRate(metric.dispatchSuccessRate) }}</span>
+          <span>{{ t('admin.throttleRate') }}: {{ formatRate(metric.throttleRate) }}</span>
+          <span>{{ t('admin.queueWaitP50') }}: {{ formatSeconds(metric.waitP50Seconds) }}</span>
+          <span>{{ t('admin.queueWaitP95') }}: {{ formatSeconds(metric.waitP95Seconds) }}</span>
+        </article>
+      </div>
+      <div class="alert-grid">
+        <template v-for="metric in providerObservability" :key="`${metric.providerId}:${metric.credentialScope}`">
+          <el-alert
+            v-for="alert in metric.alerts"
+            :key="`${metric.providerId}:${alert.code}`"
+            :title="`${metric.providerId}: ${alert.message}`"
+            type="warning"
+            :closable="false"
+            show-icon
+          />
+        </template>
+        <el-empty v-if="providerObservability.every((metric) => metric.alerts.length === 0)" :description="t('admin.noQueueAlerts')" />
+      </div>
+      <el-table v-loading="queueLoading" :data="queueTasks" class="queue-table" table-layout="fixed">
+        <el-table-column prop="taskId" :label="t('admin.queueTaskId')" min-width="170" show-overflow-tooltip />
+        <el-table-column prop="providerId" :label="t('admin.queueProvider')" width="110" />
+        <el-table-column prop="status" :label="t('admin.queueStatus')" width="150" />
+        <el-table-column prop="attemptCount" :label="t('admin.queueAttempts')" width="100" />
+        <el-table-column :label="t('admin.queueNextAttempt')" width="180">
+          <template #default="{ row }">{{ formatDateTime(row.nextAttemptAt) }}</template>
+        </el-table-column>
+        <el-table-column :label="t('admin.actions')" width="120">
+          <template #default="{ row }">
+            <el-button text size="small" @click="loadTaskDiagnostics(row.taskId)">{{ t('admin.queueDiagnostics') }}</el-button>
+          </template>
+        </el-table-column>
+      </el-table>
+      <div v-if="selectedDiagnostics" class="diagnostics-panel">
+        <div class="panel-head">
+          <strong>{{ t('admin.queueDiagnostics') }} · {{ selectedDiagnostics.task.taskId }}</strong>
+          <el-button text @click="selectedDiagnostics = null">×</el-button>
+        </div>
+        <p>{{ selectedDiagnostics.task.providerId }} · {{ selectedDiagnostics.task.status }} · {{ selectedDiagnostics.task.errorCategory || '-' }}</p>
+        <ol>
+          <li v-for="event in selectedDiagnostics.events" :key="`${event.createdAt}:${event.eventType}`">
+            {{ event.createdAt }} · {{ event.eventType }} · {{ event.fromStatus || '-' }} → {{ event.toStatus || '-' }}
+          </li>
+        </ol>
       </div>
     </section>
 
@@ -233,15 +332,26 @@ import {
   getAdminConfig,
   getAdminUsage,
   getEnabledProviders,
+  getProviderRuntime,
+  getProviderQueue,
+  getProviderObservability,
+  getTaskDiagnostics,
   getQuotaSummary,
+  getQuotaResetPreview,
+  getUserQuotaResetPreview,
   getUserQuotas,
   resetQuotaUsage,
   resetUserQuotaUsage,
   saveAdminConfig,
+  updateProviderRuntime,
+  wakeProviderRuntime,
   updateDefaultQuotaLimit,
   type Pagination,
   type QuotaSummary,
   type UserQuotaItem,
+  type ProviderRuntime,
+  type ProviderQueueTask,
+  type ProviderObservability,
 } from '../api'
 import { useI18n } from 'vue-i18n'
 import { usePermissions } from '../composables/usePermissions'
@@ -261,6 +371,11 @@ const providers = ref<string[]>([])
 const configs = reactive<Record<string, { configured: boolean; apiKeyMasked?: string; region?: 'ai' | 'com' }>>({})
 const balances = reactive<Record<string, { available?: number; availablePower?: number; configured?: boolean } | undefined>>({})
 const draftKeys = reactive<Record<string, string>>({})
+const providerRuntime = reactive<Record<string, ProviderRuntime | undefined>>({})
+const runtimeDrafts = reactive<Record<string, { maxConcurrency: number; paused: boolean }>>({})
+const queueTasks = ref<ProviderQueueTask[]>([])
+const providerObservability = ref<ProviderObservability[]>([])
+const selectedDiagnostics = ref<Awaited<ReturnType<typeof getTaskDiagnostics>>['data'] | null>(null)
 const adminUsage = ref<AdminUsageSnapshot | null>(null)
 const quotaSummary = ref<QuotaSummary | null>(null)
 const quotaLimitDraft = ref(0)
@@ -269,6 +384,7 @@ const userQuotas = ref<UserQuotaItem[]>([])
 const userQuotaPagination = ref<Pagination>({ page: 1, pageSize: 20, total: 0, totalPages: 0 })
 
 const providerLoading = ref(false)
+const queueLoading = ref(false)
 const quotaLoading = ref(false)
 const limitSaving = ref(false)
 const resetLoading = ref(false)
@@ -339,6 +455,17 @@ async function loadProviderData() {
     const providerResponse = await getEnabledProviders()
     providers.value = providerResponse.data.providers
 
+    const runtimeResponse = await getProviderRuntime()
+    for (const runtime of runtimeResponse.data.data) {
+      providerRuntime[runtime.providerId] = runtime
+      runtimeDrafts[runtime.providerId] = {
+        maxConcurrency: runtime.maxConcurrency,
+        paused: runtime.paused,
+      }
+    }
+
+    await loadQueueData()
+
     await Promise.all(
       providers.value.map(async (provider) => {
         const [configResponse] = await Promise.all([
@@ -352,6 +479,61 @@ async function loadProviderData() {
     ElMessage.error(error instanceof Error ? error.message : t('admin.queryFailed'))
   } finally {
     providerLoading.value = false
+  }
+}
+
+async function loadQueueData() {
+  if (!isRootUser.value) return
+  queueLoading.value = true
+  try {
+    const [queueResponse, observabilityResponse] = await Promise.all([
+      getProviderQueue({ page: 1, pageSize: 50 }),
+      getProviderObservability(),
+    ])
+    queueTasks.value = queueResponse.data.data
+    providerObservability.value = observabilityResponse.data.data
+  } catch (error) {
+    ElMessage.error(error instanceof Error ? error.message : t('admin.queryFailed'))
+  } finally {
+    queueLoading.value = false
+  }
+}
+
+async function wakeRuntime(provider: string) {
+  try {
+    await wakeProviderRuntime(provider)
+    ElMessage.success(t('common.saved'))
+    await loadQueueData()
+  } catch (error) {
+    ElMessage.error(error instanceof Error ? error.message : t('common.saveFailed'))
+  }
+}
+
+async function loadTaskDiagnostics(taskId: string) {
+  try {
+    selectedDiagnostics.value = (await getTaskDiagnostics(taskId)).data
+  } catch (error) {
+    ElMessage.error(error instanceof Error ? error.message : t('admin.queryFailed'))
+  }
+}
+
+async function saveRuntime(provider: string) {
+  const current = providerRuntime[provider]
+  const draft = runtimeDrafts[provider]
+  if (!current || !draft) return
+  try {
+    await updateProviderRuntime(provider, {
+      maxConcurrency: draft.maxConcurrency,
+      paused: draft.paused,
+      pauseReason: draft.paused ? current.pauseReason ?? 'manual pause' : null,
+      pollIntervalSeconds: current.pollIntervalSeconds,
+      retryLimit: current.retryLimit,
+      configVersion: current.configVersion,
+    })
+    ElMessage.success(t('common.saved'))
+    await loadProviderData()
+  } catch (error) {
+    ElMessage.error(error instanceof Error ? error.message : t('common.saveFailed'))
   }
 }
 
@@ -421,9 +603,16 @@ async function saveDefaultLimit() {
 }
 
 async function resetAllUsage() {
+  let preview
   try {
+    preview = (await getQuotaResetPreview()).data.data
     await ElMessageBox.confirm(
-      t('admin.resetUsageConfirmMessage'),
+      t('admin.resetPreviewMessage', {
+        targetUsers: preview.targetUsers,
+        clearedPower: preview.clearedPower,
+        waitingTasks: preview.waitingTasks,
+        activeTasks: preview.activeTasks,
+      }),
       t('admin.resetUsageConfirmTitle'),
       {
         confirmButtonText: t('admin.resetAllUsage'),
@@ -459,10 +648,14 @@ function canResetSingleUser(row: UserQuotaItem) {
 }
 
 async function resetSingleUserUsage(row: UserQuotaItem) {
+  let preview
   try {
+    preview = (await getUserQuotaResetPreview(row.id)).data.data
     await ElMessageBox.confirm(
-      t('admin.resetSingleUserConfirmMessage', {
+      t('admin.resetSinglePreviewMessage', {
         user: row.nickname || row.username || `#${row.id}`,
+        waitingTasks: preview.waitingTasks,
+        activeTasks: preview.activeTasks,
       }),
       t('admin.resetUsageConfirmTitle'),
       {
@@ -533,6 +726,14 @@ function formatRawCredits(value: number | undefined) {
     return '-'
   }
   return Number(value.toFixed(2))
+}
+
+function formatRate(value: number | null) {
+  return value === null ? '-' : `${(value * 100).toFixed(1)}%`
+}
+
+function formatSeconds(value: number | null) {
+  return value === null ? '-' : `${Math.round(value)}s`
 }
 
 function formatProviderBalanceFootnote(provider: string) {
@@ -631,6 +832,67 @@ h3 {
 .hero-description {
   margin-top: 10px;
   line-height: 1.6;
+}
+
+.runtime-warning {
+  margin: 8px 0;
+  color: #c45656;
+  font-size: 13px;
+}
+
+.runtime-stat-line {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  margin-top: 8px;
+  color: #657187;
+  font-size: 12px;
+}
+
+.alert-grid {
+  display: grid;
+  gap: 8px;
+  margin-bottom: 16px;
+}
+
+.observability-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(210px, 1fr));
+  gap: 10px;
+  margin-bottom: 16px;
+}
+
+.observability-card {
+  display: grid;
+  gap: 5px;
+  padding: 12px;
+  border: 1px solid #dce4ef;
+  border-radius: 8px;
+  color: #657187;
+  font-size: 13px;
+  background: #fbfcfe;
+}
+
+.observability-card strong {
+  color: #303133;
+}
+
+.queue-table {
+  width: 100%;
+}
+
+.diagnostics-panel {
+  margin-top: 16px;
+  padding: 14px;
+  border: 1px solid #dce4ef;
+  border-radius: 8px;
+  background: #fbfcfe;
+  font-size: 13px;
+}
+
+.diagnostics-panel ol {
+  margin: 8px 0 0;
+  padding-left: 20px;
 }
 
 .summary-grid {
